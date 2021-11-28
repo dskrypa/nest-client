@@ -200,7 +200,7 @@ class TemperatureProperty(NestProperty):
         if obj is None:
             return self
         value_c = super().__get__(obj, cls)
-        if obj.session.config.temp_unit == 'f':
+        if obj.client.config.temp_unit == 'f':
             return celsius_to_fahrenheit(value_c)
         return value_c
 

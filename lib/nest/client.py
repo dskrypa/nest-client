@@ -27,17 +27,17 @@ from .entities import NestObject, NestObj
 if TYPE_CHECKING:
     from requests import Response
 
-__all__ = ['NestWebSession']
+__all__ = ['NestWebClient']
 log = logging.getLogger(__name__)
 
 
-class NestWebSession:
+class NestWebClient:
     _nest_host_port = ('home.nest.com', None)
 
     def __init__(self, config_path: str = None, reauth: bool = False, overrides: Mapping[str, Optional[str]] = None):
         self.config = NestConfig(config_path, overrides)
         self.cache_path = get_user_cache_dir('nest').joinpath('session.pickle')
-        self.client = RequestsClient(NEST_URL, user_agent_fmt=USER_AGENT_CHROME, headers={'Referer': NEST_URL})
+        self._client = RequestsClient(NEST_URL, user_agent_fmt=USER_AGENT_CHROME, headers={'Referer': NEST_URL})
         self._lock = RLock()
         self.expiry = None
         self._user_id = None
@@ -58,16 +58,16 @@ class NestWebSession:
         with self._lock:
             self._maybe_refresh_login()
             log.debug('Using host:port={}:{}'.format(*self._transport_host_port))
-            self.client.host, self.client.port = self._transport_host_port
-            yield self.client
+            self._client.host, self._client.port = self._transport_host_port
+            yield self._client
 
     @contextmanager
     def nest_url(self) -> ContextManager[RequestsClient]:
         with self._lock:
             self._maybe_refresh_login()
             log.debug('Using host:port={}:{}'.format(*self._nest_host_port))
-            self.client.host, self.client.port = self._nest_host_port
-            yield self.client
+            self._client.host, self._client.port = self._nest_host_port
+            yield self._client
 
     @cached_property
     def service_urls(self):
@@ -122,17 +122,17 @@ class NestWebSession:
     def _register_session(self, expiry: datetime, userid: str, jwt_token: str, cookies=None, save: bool = False):
         self.expiry = expiry
         self.user_id = userid
-        self.client.session.headers['Authorization'] = f'Basic {jwt_token}'
+        self._client.session.headers['Authorization'] = f'Basic {jwt_token}'
         if cookies is not None:
             for cookie in cookies:
-                self.client.session.cookies.set_cookie(cookie)
+                self._client.session.cookies.set_cookie(cookie)
 
         if save:
             if not self.cache_path.parent.exists():
                 self.cache_path.parent.mkdir(parents=True)
             log.debug(f'Saving session info in cache: {self.cache_path}')
             with self.cache_path.open('wb') as f:
-                pickle.dump((expiry, userid, jwt_token, list(self.client.session.cookies)), f)
+                pickle.dump((expiry, userid, jwt_token, list(self._client.session.cookies)), f)
 
     def _get_oauth_token(self) -> str:
         headers = {
@@ -142,7 +142,7 @@ class NestWebSession:
             'cookie': self.config.oauth_cookie,
         }
         # token_url = self.config.get('oauth', 'token_url', 'OAuth Token URL', required=True)
-        # resp = self.client.session.get(token_url, headers=headers)
+        # resp = self._client.session.get(token_url, headers=headers)
         params = {
             'action': ['issueToken'],
             'response_type': ['token id_token'],
@@ -152,7 +152,7 @@ class NestWebSession:
             'scope': ['openid profile email https://www.googleapis.com/auth/nest-account'],
             'ss_domain': [NEST_URL],
         }
-        resp = self.client.session.get(OAUTH_URL, params=params, headers=headers).json()
+        resp = self._client.session.get(OAUTH_URL, params=params, headers=headers).json()
         log.log(9, 'Received OAuth response: {}'.format(json.dumps(resp, indent=4, sort_keys=True)))
         return resp['access_token']
 
@@ -163,7 +163,7 @@ class NestWebSession:
             'embed_google_oauth_access_token': True, 'expire_after': '3600s',
             'google_oauth_access_token': token, 'policy_id': 'authproxy-oauth-policy',
         }
-        resp = self.client.session.post(JWT_URL, params=params, headers=headers).json()
+        resp = self._client.session.post(JWT_URL, params=params, headers=headers).json()
         log.log(9, 'Initialized session; response: {}'.format(json.dumps(resp, indent=4, sort_keys=True)))
         claims = resp['claims']
         expiry = datetime_with_tz(claims['expirationTime'], '%Y-%m-%dT%H:%M:%S.%fZ', TZ_UTC).astimezone(TZ_LOCAL)

@@ -17,7 +17,7 @@ from .utils import fahrenheit_to_celsius as f2c
 
 if TYPE_CHECKING:
     from requests import Response
-    from .client import NestWebSession
+    from .client import NestWebClient
 
 __all__ = ['NestObject', 'Structure', 'User', 'Device', 'Shared', 'Schedule', 'EnergyUsage', 'NestObj', 'NestDevice']
 log = logging.getLogger(__name__)
@@ -64,7 +64,7 @@ class NestObject(ClearableCachedPropertyMixin):
         timestamp: Optional[int],
         revision: Optional[int],
         value: dict[str, Any],
-        session: 'NestWebSession',
+        client: 'NestWebClient',
     ):
         self.key = key
         self.type, self.serial = key.split('.', 1)
@@ -82,7 +82,7 @@ class NestObject(ClearableCachedPropertyMixin):
         self.timestamp = timestamp
         self.revision = revision
         self.value = value
-        self.session = session
+        self.client = client
 
     def __repr__(self) -> str:
         if self.__class__.type:
@@ -91,22 +91,22 @@ class NestObject(ClearableCachedPropertyMixin):
             return f'<{self.__class__.__name__}[{self.serial}, type={self.type}]>'
 
     @classmethod
-    def from_dict(cls: Type[NestObj], obj: NestObjectDict, session: 'NestWebSession') -> NestObj:
-        return cls(obj['object_key'], obj['object_timestamp'], obj['object_revision'], obj['value'], session)
+    def from_dict(cls: Type[NestObj], obj: NestObjectDict, client: 'NestWebClient') -> NestObj:
+        return cls(obj['object_key'], obj['object_timestamp'], obj['object_revision'], obj['value'], client)
 
     @classmethod
-    def find(cls: Type[NestObj], session: 'NestWebSession', serial: str = None, type: str = None) -> NestObj:  # noqa
+    def find(cls: Type[NestObj], client: 'NestWebClient', serial: str = None, type: str = None) -> NestObj:  # noqa
         if type and cls.type is not None and type != cls.type:
             expected = cls._type_cls_map.get(type, NestObject).__name__
             raise ValueError(f'Use {expected} - {cls.__name__} is incompatible with {type=}')
-        return session.get_object(type or cls.type, serial)
+        return client.get_object(type or cls.type, serial)
 
     @classmethod
-    def find_all(cls: Type[NestObj], session: 'NestWebSession', type: str = None) -> dict[str, NestObj]:  # noqa
+    def find_all(cls: Type[NestObj], client: 'NestWebClient', type: str = None) -> dict[str, NestObj]:  # noqa
         if type and cls.type is not None and type != cls.type:
             expected = cls._type_cls_map.get(type, NestObject).__name__
             raise ValueError(f'Use {expected} - {cls.__name__} is incompatible with {type=}')
-        return session.get_objects([type or cls.type])
+        return client.get_objects([type or cls.type])
 
     # region Refresh Status Methods
 
@@ -131,14 +131,14 @@ class NestObject(ClearableCachedPropertyMixin):
         else:
             req_obj = {'object_key': self.key}
 
-        with self.session.transport_url() as client:
+        with self.client.transport_url() as client:
             # Note: Web UI adds these at top level of payload: "timeout":863, "session":"2171048.27484.1638029031169"
             resp = client.post('v5/subscribe', json={'objects': [req_obj]})
 
         self._maybe_refresh(resp.json()['objects'], 'subscribe')
 
     def _app_launch(self):
-        resp = self.session.app_launch([self.type])
+        resp = self.client.app_launch([self.type])
         self._maybe_refresh(resp.json()['updated_buckets'], 'app_launch')
 
     # endregion
@@ -148,7 +148,7 @@ class NestObject(ClearableCachedPropertyMixin):
 
     def _set_full(self, data: dict[str, Any], op: str = 'MERGE') -> 'Response':
         payload = {'objects': [{'object_key': self.key, 'op': op, 'value': data}]}
-        with self.session.transport_url() as client:
+        with self.client.transport_url() as client:
             return client.post('v5/put', json=payload)
 
 
@@ -169,21 +169,21 @@ class Structure(NestObject, type='structure', parent_type=None):
     def members(self) -> dict['User', dict[str, Any]]:
         members = {}
         for member in self.value['members']:
-            user = self.session.objects[member['user']]
+            user = self.client.objects[member['user']]
             members[user] = member
         return members  # noqa
 
     @cached_property
     def user(self) -> 'User':
-        return self.session.objects[self.value['user']]  # noqa
+        return self.client.objects[self.value['user']]  # noqa
 
     @cached_property
     def devices(self) -> dict[str, 'Device']:
-        return {did: self.session.objects[did] for did in self.value['devices']}
+        return {did: self.client.objects[did] for did in self.value['devices']}
 
     @cached_property
     def swarm(self) -> dict[str, 'Device']:
-        return {did: self.session.objects[did] for did in self.value['swarm']}
+        return {did: self.client.objects[did] for did in self.value['swarm']}
 
 
 class User(NestObject, type='user', parent_type=None):
@@ -195,13 +195,13 @@ class User(NestObject, type='user', parent_type=None):
 
     @cached_property
     def structures(self) -> dict[str, 'Structure']:
-        return {did: self.session.objects[did] for did in self.value['structures']}
+        return {did: self.client.objects[did] for did in self.value['structures']}
 
     @cached_property
     def structure_memberships(self) -> dict['Structure', dict[str, Any]]:
         members = {}
         for member in self.value['structure_memberships']:
-            user = self.session.objects[member['structure']]
+            user = self.client.objects[member['structure']]
             members[user] = member
         return members  # noqa
 
@@ -264,20 +264,20 @@ class Shared(NestObject, type='shared', parent_type='device'):
         :param high: Maximum temperature to allow in Celsius (air conditioning will turn on above this)
         :return: The raw response
         """
-        if self.session.config.temp_unit == 'f':
+        if self.client.config.temp_unit == 'f':
             low = f2c(low)
             high = f2c(high)
         return self._set_full({'target_temperature_low': low, 'target_temperature_high': high})
 
     def set_temp(self, temp: float, temporary: bool = False, convert: bool = True) -> 'Response':
-        if convert and self.session.config.temp_unit == 'f':
+        if convert and self.client.config.temp_unit == 'f':
             temp = f2c(temp)
         adj = 'temporary' if temporary else 'requested'
         log.debug(f'Setting {adj} temp={temp:.1f}')
         return self._set_key('target_temperature', temp)
 
     def set_temp_and_force_run(self, temp: float) -> 'Response':
-        if fahrenheit := self.session.config.temp_unit == 'f':
+        if fahrenheit := self.client.config.temp_unit == 'f':
             temp = f2c(temp)
         mode = self.mode.upper()
         current = self._current_temperature
@@ -374,6 +374,6 @@ class Buckets(NestObject, type='buckets', parent_type='user'):
         types = defaultdict(set)
         for bucket in self.value['buckets']:
             bucket_type, serial = bucket.split('.', 1)
-            parent = self.session.parent_objects[serial]
+            parent = self.client.parent_objects[serial]
             types[parent].add(bucket_type)
         return types

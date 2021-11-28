@@ -12,7 +12,7 @@ from .argparser import ArgParser
 from .wrapper import wrap_main
 
 if TYPE_CHECKING:
-    from nest.client import NestWebSession
+    from nest.client import NestWebClient
     from nest.entities import NestObj, NestDevice, ThermostatDevice, Shared
 
 log = logging.getLogger(__name__)
@@ -91,9 +91,9 @@ def main():
     log_fmt = '%(asctime)s %(levelname)s %(name)s %(lineno)d %(message)s' if args.verbose else '%(message)s'
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format=log_fmt)
 
-    from nest.client import NestWebSession
+    from nest.client import NestWebClient
 
-    nest = NestWebSession(args.config, args.reauth)
+    nest = NestWebClient(args.config, args.reauth)
 
     if (action := args.action) == 'status':
         show_status(nest, args.details, args.format)
@@ -133,7 +133,7 @@ def main():
         raise ValueError(f'Unexpected {action=!r}')
 
 
-def control_thermostat(nest: 'NestWebSession', action: str, args):
+def control_thermostat(nest: 'NestWebClient', action: str, args):
     from nest.entities import Shared
 
     shared = Shared.find(nest)
@@ -155,7 +155,7 @@ def control_thermostat(nest: 'NestWebSession', action: str, args):
             raise ValueError(f'Unexpected {args.state=!r}')
 
 
-def _get_device(nest: 'NestWebSession', objs: dict[str, 'NestObj']) -> 'NestDevice':
+def _get_device(nest: 'NestWebClient', objs: dict[str, 'NestObj']) -> 'NestDevice':
     devices = [obj for obj in objs.values() if obj.type == 'device']
     if len(devices) == 1:
         return devices[0]
@@ -182,7 +182,7 @@ def _convert_temp_values(status: dict[str, dict[str, Any]]):
             status[section][key] = c2f(status[section][key])
 
 
-def show_status(nest: 'NestWebSession', details: bool, out_fmt: str):
+def show_status(nest: 'NestWebClient', details: bool, out_fmt: str):
     objs = nest.get_objects(['device', 'shared'])
     device = _get_device(nest, objs)  # type: ThermostatDevice
     shared = objs[f'shared.{device.serial}']  # type: Shared
@@ -228,7 +228,7 @@ def show_status(nest: 'NestWebSession', details: bool, out_fmt: str):
         tbl.print_rows([status_table])
 
 
-def show_item(nest: 'NestWebSession', item: str, out_fmt: str = None, buckets=None, raw: bool = False):
+def show_item(nest: 'NestWebClient', item: str, out_fmt: str = None, buckets=None, raw: bool = False):
     if item == 'energy':
         data = nest.get_object('energy_latest').value
     elif item == 'weather':

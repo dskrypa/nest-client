@@ -25,7 +25,6 @@ optional_dependencies = {
 optional_dependencies['ALL'] = sorted(set(chain.from_iterable(optional_dependencies.values())))
 
 requirements = [
-    # 'ds_tools@ git+git://github.com/dskrypa/ds_tools',
     'requests_client@ git+git://github.com/dskrypa/requests_client',
     'tz_aware_dt@ git+git://github.com/dskrypa/tz_aware_dt',
     'requests',

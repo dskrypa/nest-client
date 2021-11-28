@@ -1,4 +1,4 @@
-from .client import NestWebSession
+from .client import NestWebClient
 from .config import NestConfig
 from .constants import *
 from .entities import *
