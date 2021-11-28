@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from functools import cached_property
 from threading import RLock
-from typing import TYPE_CHECKING, ContextManager, Union
+from typing import TYPE_CHECKING, ContextManager, Union, Sequence, Optional, Mapping
 from urllib.parse import urlparse
 
 from requests_client import RequestsClient, USER_AGENT_CHROME
@@ -21,8 +21,8 @@ from tz_aware_dt.tz_aware_dt import datetime_with_tz, localize, TZ_LOCAL, TZ_UTC
 from .utils import get_user_cache_dir
 from .config import NestConfig
 from .constants import JWT_URL, NEST_API_KEY, NEST_URL, OAUTH_URL,INIT_BUCKET_TYPES
-from .exceptions import SessionExpired, ConfigError
-from .entities import NestObject
+from .exceptions import SessionExpired, ConfigError, NestObjectNotFound
+from .entities import NestObject, NestObj
 
 if TYPE_CHECKING:
     from requests import Response
@@ -34,8 +34,8 @@ log = logging.getLogger(__name__)
 class NestWebSession:
     _nest_host_port = ('home.nest.com', None)
 
-    def __init__(self, config: NestConfig = None, reauth: bool = False):
-        self.config = config or NestConfig()
+    def __init__(self, config_path: str = None, reauth: bool = False, overrides: Mapping[str, Optional[str]] = None):
+        self.config = NestConfig(config_path, overrides)
         self.cache_path = get_user_cache_dir('nest').joinpath('session.pickle')
         self.client = RequestsClient(NEST_URL, user_agent_fmt=USER_AGENT_CHROME, headers={'Referer': NEST_URL})
         self._lock = RLock()
@@ -170,18 +170,50 @@ class NestWebSession:
         self._register_session(expiry, claims['subject']['nestId']['id'], resp['jwt'], save=True)
         log.debug(f'Initialized session for user={self.user_id!r} with expiry={localize(expiry)}')
 
-    def app_launch(self, bucket_types: list[str] = None) -> 'Response':
+    def app_launch(self, bucket_types: Sequence[str] = None) -> 'Response':
         with self.nest_url() as client:
             payload = {'known_bucket_types': bucket_types or [], 'known_bucket_versions': []}
             return client.post(f'api/0.1/user/{self.user_id}/app_launch', json=payload)
 
-    @cached_property
-    def objects(self) -> dict[str, NestObject]:
-        objects = self.app_launch(INIT_BUCKET_TYPES).json()['updated_buckets']
+    def get_object(self, type: str, serial: str = None, cached: bool = False) -> NestObj:  # noqa
+        if cached and (obj_dict := self.__dict__.get('objects')):
+            try:
+                return self._get_object(obj_dict, type, serial)
+            except NestObjectNotFound:  # let ValueError propagate
+                pass  # try fresh objects
+
+        return self._get_object(self.get_objects([type]), type, serial)
+
+    def _get_object(self, obj_dict: dict[str, NestObj], type: str, serial: str = None) -> NestObj:  # noqa
+        serial = serial or self.config.serial
+        if serial:
+            object_key = f'{type}.{serial}'
+            try:
+                return obj_dict[object_key]
+            except KeyError:
+                raise NestObjectNotFound(f'Could not find {object_key=} (found={list(obj_dict)})')
+        else:
+            if len(obj_dict) == 1:
+                return next(iter(obj_dict.values()))
+            elif not obj_dict:
+                raise NestObjectNotFound(f'No {type=} objects were found from {self}')
+            else:
+                raise ValueError(
+                    f'A serial number is required - found {len(obj_dict)} {type=} objects: {list(obj_dict)}'
+                )
+
+    def get_objects(self, types: Sequence[str], cached: bool = False) -> dict[str, NestObj]:
+        if cached and (obj_dict := self.__dict__.get('objects')):
+            return obj_dict
+        objects = self.app_launch(types).json()['updated_buckets']
         return {obj['object_key']: NestObject.from_dict(obj, self) for obj in objects}
 
     @cached_property
-    def parent_objects(self) -> dict[str, NestObject]:
+    def objects(self) -> dict[str, NestObj]:
+        return self.get_objects(INIT_BUCKET_TYPES)
+
+    @cached_property
+    def parent_objects(self) -> dict[str, NestObj]:
         return {obj.serial: obj for obj in self.objects.values() if obj.parent_type is None}
 
     def get_mobile_info(self):

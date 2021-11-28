@@ -13,6 +13,7 @@ from collections import UserDict
 from collections.abc import KeysView, ValuesView
 from contextlib import contextmanager
 from datetime import datetime, date, timedelta
+from difflib import SequenceMatcher, unified_diff
 from functools import cached_property
 from io import StringIO
 from shutil import get_terminal_size
@@ -31,7 +32,7 @@ except ImportError:
 from .exceptions import TableFormatException
 from .utils import ClearableCachedPropertyMixin, replacement_itemgetter
 
-__all__ = ['Column', 'SimpleColumn', 'Table', 'TableBar', 'HeaderRow', 'colored', 'Printer']
+__all__ = ['Column', 'SimpleColumn', 'Table', 'TableBar', 'HeaderRow', 'colored', 'Printer', 'cdiff']
 log = logging.getLogger(__name__)
 
 ANSI_COLOR_RX = re.compile(r'(\033\[\d+;?\d*;?\d*m)(.*)(\033\[\d+;?\d*;?\d*m)')
@@ -44,6 +45,23 @@ def colored(text, fg=None, do_color: bool = True, bg=None):
     else:
         colors = _fg(fg) if fg is not None else _bg(bg) if bg is not None else ()
     return stylize(text, colors) if do_color and colors else text
+
+
+def cdiff(path1, path2, n: int = 3):
+    with open(path1, 'r', encoding='utf-8') as f1, open(path2, 'r', encoding='utf-8') as f2:
+        _cdiff(f1.read().splitlines(), f2.read().splitlines(), path1, path2, n=n)
+
+
+def _cdiff(a, b, name_a: str = '', name_b: str = '', n: int = 3):
+    for i, line in enumerate(unified_diff(a, b, name_a, name_b, n=n, lineterm='')):
+        if line.startswith('+') and i > 1:
+            print(colored(line, 2))
+        elif line.startswith('-') and i > 1:
+            print(colored(line, 1))
+        elif line.startswith('@@ '):
+            print(colored(line, 6), end='\n\n')
+        else:
+            print(line)
 
 
 # region Table Formatting

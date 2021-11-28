@@ -8,14 +8,18 @@ from functools import cached_property
 from getpass import getuser
 from pathlib import Path
 from tempfile import gettempdir
-from typing import Any, Union, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from .__version__ import __title__ as pkg_name
 from .exceptions import DictAttrFieldNotFoundError
 
+if TYPE_CHECKING:
+    from .entities import NestObject
+
 __all__ = [
     'ClearableCachedPropertyMixin',
     'NestProperty',
+    'TemperatureProperty',
     'get_user_cache_dir',
     'get_user_temp_dir',
     'celsius_to_fahrenheit',
@@ -190,6 +194,15 @@ class NestProperty(ClearableCachedProperty):
             obj.__dict__[self.name] = value
         return value
 
+
+class TemperatureProperty(NestProperty):
+    def __get__(self, obj: 'NestObject', cls):
+        if obj is None:
+            return self
+        value_c = super().__get__(obj, cls)
+        if obj.session.config.temp_unit == 'f':
+            return celsius_to_fahrenheit(value_c)
+        return value_c
 
 # endregion
 

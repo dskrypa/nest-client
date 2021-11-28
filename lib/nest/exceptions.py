@@ -25,6 +25,10 @@ class TimeNotFound(NestException):
     pass
 
 
+class NestObjectNotFound(NestException):
+    pass
+
+
 class TableFormatException(NestException):
     def __init__(self, scope, fmt_str, value, exc, *args):
         self.scope = scope

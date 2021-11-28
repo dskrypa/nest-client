@@ -12,18 +12,19 @@ from typing import TYPE_CHECKING, Any, Union, Optional, TypeVar, Type
 from tz_aware_dt.utils import format_duration
 
 from .constants import TARGET_TEMP_TYPES, BUCKET_CHILD_TYPES, NEST_WHERE_MAP
-from .utils import NestProperty, ClearableCachedPropertyMixin
+from .utils import NestProperty, TemperatureProperty, ClearableCachedPropertyMixin
 from .utils import fahrenheit_to_celsius as f2c
 
 if TYPE_CHECKING:
     from requests import Response
     from .client import NestWebSession
 
-__all__ = ['NestObject', 'Structure', 'User', 'Device', 'Shared', 'Schedule', 'EnergyUsage']
+__all__ = ['NestObject', 'Structure', 'User', 'Device', 'Shared', 'Schedule', 'EnergyUsage', 'NestObj', 'NestDevice']
 log = logging.getLogger(__name__)
 
 NestObjectDict = dict[str, Union[str, int, None, dict[str, Any]]]
 NestObj = TypeVar('NestObj', bound='NestObject')
+NestDevice = TypeVar('NestDevice', bound='Device')
 
 
 class NestObject(ClearableCachedPropertyMixin):
@@ -92,6 +93,20 @@ class NestObject(ClearableCachedPropertyMixin):
     @classmethod
     def from_dict(cls: Type[NestObj], obj: NestObjectDict, session: 'NestWebSession') -> NestObj:
         return cls(obj['object_key'], obj['object_timestamp'], obj['object_revision'], obj['value'], session)
+
+    @classmethod
+    def find(cls: Type[NestObj], session: 'NestWebSession', serial: str = None, type: str = None) -> NestObj:  # noqa
+        if type and cls.type is not None and type != cls.type:
+            expected = cls._type_cls_map.get(type, NestObject).__name__
+            raise ValueError(f'Use {expected} - {cls.__name__} is incompatible with {type=}')
+        return session.get_object(type or cls.type, serial)
+
+    @classmethod
+    def find_all(cls: Type[NestObj], session: 'NestWebSession', type: str = None) -> dict[str, NestObj]:  # noqa
+        if type and cls.type is not None and type != cls.type:
+            expected = cls._type_cls_map.get(type, NestObject).__name__
+            raise ValueError(f'Use {expected} - {cls.__name__} is incompatible with {type=}')
+        return session.get_objects([type or cls.type])
 
     # region Refresh Status Methods
 
@@ -204,7 +219,8 @@ class Device(NestObject, type='device', parent_type=None):
 class ThermostatDevice(Device, type='device', parent_type=None, key='hvac_wires'):
     backplate_model = NestProperty('backplate_model')
     backplate_serial = NestProperty('backplate_serial_number')
-    backplate_temperature = NestProperty('backplate_temperature')
+    _backplate_temperature = NestProperty('backplate_temperature')  # type: float  # celsius
+    backplate_temperature = TemperatureProperty('backplate_temperature')  # type: float  # unit from config
     capability_level = NestProperty('capability_level')
 
     battery_level = NestProperty('battery_level')
@@ -230,6 +246,10 @@ class Shared(NestObject, type='shared', parent_type='device'):
     _target_temperature_low = NestProperty('target_temperature_low')  # type: float  # celsius
     _target_temperature = NestProperty('target_temperature')  # type: float  # celsius
     _current_temperature = NestProperty('current_temperature')  # type: float  # celsius
+    target_temperature_high = TemperatureProperty('target_temperature_high')  # type: float  # unit from config
+    target_temperature_low = TemperatureProperty('target_temperature_low')  # type: float  # unit from config
+    target_temperature = TemperatureProperty('target_temperature')  # type: float  # unit from config
+    current_temperature = TemperatureProperty('current_temperature')  # type: float  # unit from config
     can_heat = NestProperty('can_heat')  # type: bool
     can_cool = NestProperty('can_cool')  # type: bool
     compressor_lockout_timeout = NestProperty('compressor_lockout_timeout')
