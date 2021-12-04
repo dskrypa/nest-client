@@ -15,7 +15,8 @@ from threading import RLock
 from typing import TYPE_CHECKING, ContextManager, Union, Optional, Mapping, Iterable
 from urllib.parse import urlparse
 
-from requests_client import RequestsClient, USER_AGENT_CHROME
+from requests_client.client import RequestsClient
+from requests_client.user_agent import USER_AGENT_CHROME
 from tz_aware_dt.tz_aware_dt import datetime_with_tz, localize, TZ_LOCAL, TZ_UTC
 
 from .utils import get_user_cache_dir
@@ -80,6 +81,15 @@ class NestWebClient:
 
     # region Low Level Methods
 
+    def app_launch(self, bucket_types: Iterable[str] = None) -> 'Response':
+        with self.nest_url() as client:
+            bucket_types = list(bucket_types) if bucket_types else []
+            payload = {'known_bucket_types': bucket_types, 'known_bucket_versions': []}
+            return client.post(f'api/0.1/user/{self.user_id}/app_launch', json=payload)
+
+    def get_buckets(self, types: Iterable[str]) -> list[NestObjectDict]:
+        return self.app_launch(types).json()['updated_buckets']
+
     def get_mobile_info(self):
         """Returns the same info as app_launch, but in a slightly different format"""
         with self.transport_url() as client:
@@ -116,14 +126,6 @@ class NestWebClient:
 
         with self.nest_url() as client:
             return client.get(f'api/0.1/weather/forecast/{zip_code},{country_code}').json()
-
-    def app_launch(self, bucket_types: Iterable[str] = None) -> 'Response':
-        with self.nest_url() as client:
-            payload = {'known_bucket_types': list(bucket_types) or [], 'known_bucket_versions': []}
-            return client.post(f'api/0.1/user/{self.user_id}/app_launch', json=payload)
-
-    def get_buckets(self, types: Iterable[str]) -> list[NestObjectDict]:
-        return self.app_launch(types).json()['updated_buckets']
 
     # endregion
 
@@ -176,15 +178,6 @@ class NestWebClient:
             else:
                 raise ValueError(f'A serial number is required - found {len(obj_map)} {type=} objects: {list(obj_map)}')
 
-    def refresh_known_objects(self):
-        types = {obj.type for obj in self._known_objects.values()}
-        for raw_obj in self.get_buckets(types):
-            key = raw_obj['object_key']
-            if obj := self._known_objects.get(key):
-                obj._refresh(raw_obj)
-            else:
-                self._known_objects[key] = NestObject.from_dict(raw_obj, self)
-
     # endregion
 
     # region Typed NestObject Getters
@@ -206,6 +199,31 @@ class NestWebClient:
 
     def get_users(self, cached: bool = True) -> dict[str, User]:
         return self.get_objects(['user'], cached)
+
+    # endregion
+
+    # region Refresh Methods
+
+    def subscribe(self, objects: Iterable[NestObj], send_meta: bool = True) -> list[NestObjectDict]:
+        with self.transport_url() as client:
+            resp = client.get('v5/subscribe', json={'objects': [obj.subscribe_dict(send_meta) for obj in objects]})
+            return resp.json()['objects']
+
+    def refresh_known_objects(self, subscribe: bool = True, send_meta: bool = True):
+        self.refresh_objects(self._known_objects.values(), subscribe, send_meta)
+
+    def refresh_objects(self, objects: Iterable[NestObj], subscribe: bool = True, send_meta: bool = True):
+        if subscribe:
+            raw_objs = self.subscribe(objects, send_meta)
+        else:
+            raw_objs = self.get_buckets({obj.type for obj in objects})
+
+        for raw_obj in raw_objs:
+            key = raw_obj['object_key']
+            if obj := self._known_objects.get(key):
+                obj._refresh(raw_obj)
+            else:
+                self._known_objects[key] = NestObject.from_dict(raw_obj, self)
 
     # endregion
 

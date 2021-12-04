@@ -7,6 +7,7 @@ Classes that represent Nest Structures, Users, Devices/Thermostats, etc.
 import logging
 import time
 from collections import defaultdict
+from datetime import datetime
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Union, Optional, TypeVar, Type
 
@@ -84,6 +85,7 @@ class NestObject(ClearableCachedPropertyMixin):
         self.revision = revision
         self.value = value
         self.client = client
+        self._refreshed = datetime.now()
 
     def __repr__(self) -> str:
         if self.__class__.type:
@@ -111,13 +113,21 @@ class NestObject(ClearableCachedPropertyMixin):
 
     # region Refresh Status Methods
 
-    def refresh(self, all: bool = True):  # noqa
-        types = {obj.type for obj in self.client._known_objects.values()} if all else {self.type}
-        for raw_obj in self.client.get_buckets(types):
-            if (key := raw_obj['object_key']) == self.key:
-                self._refresh(raw_obj)
-            elif obj := self.client._known_objects.get(key):
-                obj._refresh(raw_obj)
+    def subscribe_dict(self, meta: bool = True) -> dict[str, Union[str, int, None]]:
+        if meta:
+            return {'object_key': self.key, 'object_timestamp': self.timestamp, 'object_revision': self.revision}
+        else:
+            return {'object_key': self.key}
+
+    def refresh(self, all: bool = True, subscribe: bool = True, send_meta: bool = True):  # noqa
+        last = self._refreshed
+        if all:
+            self.client.refresh_known_objects(subscribe, send_meta)
+        else:
+            self.client.refresh_objects([self], subscribe, send_meta)
+        if last == self._refreshed:
+            target = 'all objects' if all else self
+            log.debug(f'Attempted to refresh {target}, but no fresh data was received for {self}')
 
     def _maybe_refresh(self, objects: list[NestObjectDict], source: str):
         for obj in objects:
@@ -128,27 +138,18 @@ class NestObject(ClearableCachedPropertyMixin):
             keys = [obj['object_key'] for obj in objects]
             log.warning(f'Could not refresh {self} via {source} - received unexpected {keys=}')
 
-    def _refresh(self, obj_dict: dict[str, Union[str, int, None, dict[str, Any]]]):
+    def _refresh(self, obj_dict: NestObjectDict):
         self.clear_cached_properties()
         self.revision = obj_dict['object_revision']
         self.timestamp = obj_dict['object_timestamp']
         self.value = obj_dict['value']
+        self._refreshed = datetime.now()
 
     def _subscribe(self, send_meta: bool = False):
-        if send_meta:
-            req_obj = {'object_key': self.key, 'object_timestamp': self.timestamp, 'object_revision': self.revision}
-        else:
-            req_obj = {'object_key': self.key}
-
-        with self.client.transport_url() as client:
-            # Note: Web UI adds these at top level of payload: "timeout":863, "session":"2171048.27484.1638029031169"
-            resp = client.post('v5/subscribe', json={'objects': [req_obj]})
-
-        self._maybe_refresh(resp.json()['objects'], 'subscribe')
+        self._maybe_refresh(self.client.subscribe([self], send_meta), 'subscribe')
 
     def _app_launch(self):
-        resp = self.client.app_launch([self.type])
-        self._maybe_refresh(resp.json()['updated_buckets'], 'app_launch')
+        self._maybe_refresh(self.client.get_buckets([self.type]), 'app_launch')
 
     # endregion
 
@@ -158,6 +159,7 @@ class NestObject(ClearableCachedPropertyMixin):
     def _set_full(self, data: dict[str, Any], op: str = 'MERGE') -> 'Response':
         payload = {'objects': [{'object_key': self.key, 'op': op, 'value': data}]}
         with self.client.transport_url() as client:
+            log.debug(f'Submitting {payload=}')
             return client.post('v5/put', json=payload)
 
 
@@ -258,6 +260,18 @@ class ThermostatDevice(Device, type='device', parent_type=None, key='hvac_wires'
     def fan(self) -> dict[str, Union[str, bool, int]]:
         return {k[4:]: v for k, v in self.value.items() if k.startswith('fan_')}
 
+    def start_fan(self, duration: int = 1800) -> 'Response':
+        """
+        :param duration: Number of seconds for which the fan should run
+        :return: The raw response
+        """
+        timeout = int(time.time()) + duration
+        log.debug(f'Submitting fan start request with duration={format_duration(duration)} => end time of {timeout}')
+        return self._set_key('fan_timer_timeout', timeout)
+
+    def stop_fan(self) -> 'Response':
+        return self._set_key('fan_timer_timeout', 0)
+
 
 class Shared(NestObject, type='shared', parent_type='device'):
     name = NestProperty('name')
@@ -327,19 +341,6 @@ class Shared(NestObject, type='shared', parent_type='device'):
         if mode not in TARGET_TEMP_TYPES:
             raise ValueError(f'Invalid {mode=}')
         return self._set_key('target_temperature_type', mode)
-
-    def start_fan(self, duration: int = 1800) -> 'Response':
-        """
-        :param duration: Number of seconds for which the fan should run
-        :return: The raw response
-        """
-        # TODO: This may not work
-        timeout = int(time.time()) + duration
-        log.debug(f'Submitting fan start request with duration={format_duration(duration)} => end time of {timeout}')
-        return self._set_key('fan_timer_timeout', timeout)
-
-    def stop_fan(self) -> 'Response':
-        return self._set_key('fan_timer_timeout', 0)
 
 
 class Schedule(NestObject, type='schedule', parent_type='device'):

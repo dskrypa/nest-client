@@ -134,25 +134,29 @@ def main():
 
 
 def control_thermostat(nest: 'NestWebClient', action: str, args):
-    from nest.entities import Shared
+    from nest.entities import Shared, ThermostatDevice
 
-    shared = Shared.find(nest)
-    if action == 'temp':
-        if args.only_set:
-            shared.set_temp(args.temp)
-        else:
-            shared.set_temp_and_force_run(args.temp)
-    elif action == 'range':
-        shared.set_temp_range(args.low, args.high)
-    elif action == 'mode':
-        shared.set_mode(args.mode)
-    elif action == 'fan':
+    if action == 'fan':
+        thermostat = ThermostatDevice.find(nest)
         if args.state == 'on':
-            shared.start_fan(args.duration)
+            thermostat.start_fan(args.duration)
         elif args.state == 'off':
-            shared.stop_fan()
+            thermostat.stop_fan()
         else:
             raise ValueError(f'Unexpected {args.state=!r}')
+    else:
+        shared = Shared.find(nest)
+        if action == 'temp':
+            if args.only_set:
+                shared.set_temp(args.temp)
+            else:
+                shared.set_temp_and_force_run(args.temp)
+        elif action == 'range':
+            shared.set_temp_range(args.low, args.high)
+        elif action == 'mode':
+            shared.set_mode(args.mode)
+        else:
+            raise ValueError(f'Unexpected {action=}')
 
 
 def _get_device(nest: 'NestWebClient', objs: dict[str, 'NestObj']) -> 'NestDevice':
