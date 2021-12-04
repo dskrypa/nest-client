@@ -1,4 +1,5 @@
 """
+Classes that represent Nest Structures, Users, Devices/Thermostats, etc.
 
 :author: Doug Skrypa
 """
@@ -110,6 +111,14 @@ class NestObject(ClearableCachedPropertyMixin):
 
     # region Refresh Status Methods
 
+    def refresh(self, all: bool = True):  # noqa
+        types = {obj.type for obj in self.client._known_objects.values()} if all else {self.type}
+        for raw_obj in self.client.get_buckets(types):
+            if (key := raw_obj['object_key']) == self.key:
+                self._refresh(raw_obj)
+            elif obj := self.client._known_objects.get(key):
+                obj._refresh(raw_obj)
+
     def _maybe_refresh(self, objects: list[NestObjectDict], source: str):
         for obj in objects:
             if obj['object_key'] == self.key:
@@ -167,23 +176,21 @@ class Structure(NestObject, type='structure', parent_type=None):
 
     @cached_property
     def members(self) -> dict['User', dict[str, Any]]:
-        members = {}
-        for member in self.value['members']:
-            user = self.client.objects[member['user']]
-            members[user] = member
-        return members  # noqa
+        return {self.client.get_user(member['user']): member for member in self.value['members']}
 
     @cached_property
     def user(self) -> 'User':
-        return self.client.objects[self.value['user']]  # noqa
+        return self.client.get_user(self.value['user'])
 
     @cached_property
     def devices(self) -> dict[str, 'Device']:
-        return {did: self.client.objects[did] for did in self.value['devices']}
+        dev_keys = set(self.value['devices'])
+        return {dev_key: dev for dev_key, dev in self.client.get_devices().items() if dev_key in dev_keys}
 
     @cached_property
     def swarm(self) -> dict[str, 'Device']:
-        return {did: self.client.objects[did] for did in self.value['swarm']}
+        dev_keys = set(self.value['swarm'])
+        return {dev_key: dev for dev_key, dev in self.client.get_devices().items() if dev_key in dev_keys}
 
 
 class User(NestObject, type='user', parent_type=None):
@@ -208,12 +215,24 @@ class User(NestObject, type='user', parent_type=None):
 
 class Device(NestObject, type='device', parent_type=None):
     name = NestProperty('name', default='')
+    device_id = NestProperty('weave_device_id')
     software_version = NestProperty('current_version')
     model_version = NestProperty('model_version')
     postal_code = NestProperty('postal_code')
+    where_id = NestProperty('where_id', default=None)
+
+    is_thermostat: bool = False
 
     def __repr__(self) -> str:
         return f'<{self.__class__.__name__}[{self.serial}, name={self.name!r}, model={self.model_version!r}]>'
+
+    @cached_property
+    def structure(self) -> Optional[Structure]:
+        return next((st for st in self.client.get_structures().values() if self.key in st.devices), None)
+
+    @cached_property
+    def where(self) -> Optional[str]:
+        return NEST_WHERE_MAP.get(self.where_id)
 
 
 class ThermostatDevice(Device, type='device', parent_type=None, key='hvac_wires'):
@@ -228,6 +247,8 @@ class ThermostatDevice(Device, type='device', parent_type=None, key='hvac_wires'
 
     humidity = NestProperty('current_humidity')
     fan_current_speed = NestProperty('fan_current_speed')
+
+    is_thermostat: bool = True
 
     @cached_property
     def has(self) -> dict[str, bool]:

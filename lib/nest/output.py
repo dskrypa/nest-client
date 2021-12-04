@@ -13,7 +13,7 @@ from collections import UserDict
 from collections.abc import KeysView, ValuesView
 from contextlib import contextmanager
 from datetime import datetime, date, timedelta
-from difflib import SequenceMatcher, unified_diff
+from difflib import unified_diff
 from functools import cached_property
 from io import StringIO
 from shutil import get_terminal_size
@@ -518,6 +518,7 @@ class Printer:
                 content,
                 kwargs.pop('force_single_yaml', False),
                 kwargs.pop('indent_nested_lists', True),
+                kwargs.pop('default_flow_style', None),
                 sort_keys=kwargs.pop('sort_keys', True),
             )
         elif self.output_format == 'pprint':
@@ -619,15 +620,18 @@ def prep_for_yaml(obj):
         return obj
 
 
-def yaml_dump(data, force_single_yaml=False, indent_nested_lists=False, default_flow_style=None, **kwargs):
+def yaml_dump(
+    data, force_single_yaml: bool = False, indent_nested_lists: bool = True, default_flow_style: bool = None, **kwargs
+) -> str:
     """
     Serialize the given data as YAML
 
     :param data: Data structure to be serialized
-    :param bool force_single_yaml: Force a single YAML document to be created instead of multiple ones when the
+    :param force_single_yaml: Force a single YAML document to be created instead of multiple ones when the
       top-level data structure is not a dict
-    :param bool indent_nested_lists: Indent lists that are nested in dicts in the same way as the Perl yaml library
-    :return str: Yaml-formatted data
+    :param indent_nested_lists: Indent lists that are nested in dicts in the same way as the Perl yaml library
+    :param default_flow_style: Whether the default flow style should be used
+    :return: Yaml-formatted data
     """
     content = prep_for_yaml(data)
     kwargs.setdefault('explicit_start', True)
@@ -637,11 +641,24 @@ def yaml_dump(data, force_single_yaml=False, indent_nested_lists=False, default_
         kwargs['Dumper'] = IndentedYamlDumper
 
     if isinstance(content, (dict, str)) or force_single_yaml:
-        kwargs.setdefault('default_flow_style', False if default_flow_style is None else default_flow_style)
-        formatted = yaml.dump(content, **kwargs)
+        # kwargs.setdefault('default_flow_style', False if default_flow_style is None else default_flow_style)
+        # formatted = yaml.dump(content, **kwargs)
+        return _dump_yaml(content, kwargs, default_flow_style)
     else:
-        kwargs.setdefault('default_flow_style', True if default_flow_style is None else default_flow_style)
-        formatted = yaml.dump_all(content, **kwargs)
+        # kwargs.setdefault('default_flow_style', True if default_flow_style is None else default_flow_style)
+        # formatted = yaml.dump_all(content, **kwargs)
+        return '\n'.join(_dump_yaml(row, kwargs, default_flow_style) for row in content)
+
+    # if formatted.endswith('...\n'):
+    #     formatted = formatted[:-4]
+    # if formatted.endswith('\n'):
+    #     formatted = formatted[:-1]
+    # return formatted
+
+
+def _dump_yaml(content, kwargs, default_flow_style: bool = None) -> str:
+    kwargs.setdefault('default_flow_style', False if default_flow_style is None else default_flow_style)
+    formatted = yaml.dump(content, **kwargs)
     if formatted.endswith('...\n'):
         formatted = formatted[:-4]
     if formatted.endswith('\n'):

@@ -115,4 +115,4 @@ ALL_BUCKET_TYPES = [
     'widget_track'
 ]
 
-INIT_BUCKET_TYPES = ['buckets', 'device', 'message', 'schedule', 'shared', 'structure', 'user', 'user_settings']
+INIT_BUCKET_TYPES = {'buckets', 'device', 'message', 'schedule', 'shared', 'structure', 'user', 'user_settings'}

@@ -47,26 +47,26 @@ def parser():
     show_parser.add_argument('--format', '-f', choices=Printer.formats, help='Output format')
     show_parser.add_argument('--raw', '-r', action='store_true', help='Show the full raw response instead of the processed response (only applies to item=buckets)')
 
-    with parser.add_subparser('action', 'schedule', 'Update the schedule') as schd_parser:
-        schd_add = schd_parser.add_subparser('sub_action', 'add', 'Add entries with the specified schedule')
-        schd_add.add_argument('cron', help='Cron-format schedule to use')
-        schd_add.add_argument('temp', type=float, help='The temperature to set at the specified time')
-
-        schd_rem = schd_parser.add_subparser('sub_action', 'remove', 'Remove entries with the specified schedule')
-        schd_rem.add_argument('cron', help='Cron-format schedule to use')
-        schd_rem.add_constant('temp', None)
-
-        schd_save = schd_parser.add_subparser('sub_action', 'save', 'Save the current schedule to a file')
-        schd_save.add_argument('path', help='The path to a file in which the current schedule should be saved')
-        schd_save.add_argument('--overwrite', '-W', action='store_true', help='Overwrite the file if it already exists')
-
-        schd_load = schd_parser.add_subparser('sub_action', 'load', 'Load a schedule from a file')
-        schd_load.add_argument('path', help='The path to a file containing the schedule that should be loaded')
-
-        schd_show = schd_parser.add_subparser('sub_action', 'show', 'Show the current schedule')
-        schd_show.add_argument('--format', '-f', choices=Printer.formats, help='Output format')
-
-        schd_parser.add_common_arg('--dry_run', '-D', action='store_true', help='Print actions that would be taken instead of taking them')
+    # with parser.add_subparser('action', 'schedule', 'Update the schedule') as schd_parser:
+    #     schd_add = schd_parser.add_subparser('sub_action', 'add', 'Add entries with the specified schedule')
+    #     schd_add.add_argument('cron', help='Cron-format schedule to use')
+    #     schd_add.add_argument('temp', type=float, help='The temperature to set at the specified time')
+    #
+    #     schd_rem = schd_parser.add_subparser('sub_action', 'remove', 'Remove entries with the specified schedule')
+    #     schd_rem.add_argument('cron', help='Cron-format schedule to use')
+    #     schd_rem.add_constant('temp', None)
+    #
+    #     schd_save = schd_parser.add_subparser('sub_action', 'save', 'Save the current schedule to a file')
+    #     schd_save.add_argument('path', help='The path to a file in which the current schedule should be saved')
+    #     schd_save.add_argument('--overwrite', '-W', action='store_true', help='Overwrite the file if it already exists')
+    #
+    #     schd_load = schd_parser.add_subparser('sub_action', 'load', 'Load a schedule from a file')
+    #     schd_load.add_argument('path', help='The path to a file containing the schedule that should be loaded')
+    #
+    #     schd_show = schd_parser.add_subparser('sub_action', 'show', 'Show the current schedule')
+    #     schd_show.add_argument('--format', '-f', choices=Printer.formats, help='Output format')
+    #
+    #     schd_parser.add_common_arg('--dry_run', '-D', action='store_true', help='Print actions that would be taken instead of taking them')
 
     full_status_parser = parser.add_subparser('action', 'full_status', 'Show/save the full device+shared status')
     full_status_parser.add_argument('--path', '-p', help='Location to store status info')
@@ -234,7 +234,9 @@ def show_item(nest: 'NestWebClient', item: str, out_fmt: str = None, buckets=Non
     elif item == 'weather':
         data = nest.get_weather()
     elif item == 'buckets':
-        data = nest.app_launch(buckets).json() if raw else nest.app_launch(buckets)
+        data = nest.app_launch(buckets).json()
+        if not raw:
+            data = data['updated_buckets']
     elif item == 'bucket_names':
         data = nest.get_object('buckets').value
     # elif item == 'schedule':
