@@ -359,6 +359,10 @@ class Shared(NestObject, type='shared', parent_type='device'):
     hvac_heater_state = NestProperty('hvac_heater_state')
     hvac_fan_state = NestProperty('hvac_fan_state')
 
+    @property
+    def target_temp_range(self) -> tuple[float, float]:
+        return self.target_temperature_low, self.target_temperature_high
+
     def set_temp_range(self, low: float, high: float) -> 'Response':
         """
         :param low: Minimum temperature to maintain in Celsius (heat will turn on if the temp drops below this)
