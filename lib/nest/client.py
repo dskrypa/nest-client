@@ -23,7 +23,7 @@ from .utils import get_user_cache_dir
 from .config import NestConfig
 from .constants import JWT_URL, NEST_API_KEY, NEST_URL, OAUTH_URL,INIT_BUCKET_TYPES
 from .exceptions import SessionExpired, ConfigError, NestObjectNotFound
-from .entities import NestObjectDict, NestObject, NestObj, NestDevice, Structure, User
+from .entities import NestObjectDict, NestObject, NestObj, NestDevice, Structure, User, Shared
 
 if TYPE_CHECKING:
     from requests import Response, Session
@@ -200,11 +200,27 @@ class NestWebClient:
     def get_users(self, cached: bool = True) -> dict[str, User]:
         return self.get_objects(['user'], cached)
 
-    def get_shared(self, serial: str = None, cached: bool = True) -> User:
+    def get_shared(self, serial: str = None, cached: bool = True) -> Shared:
         return self.get_object('shared', serial, cached)
 
-    def get_shareds(self, cached: bool = True) -> dict[str, User]:
+    def get_shareds(self, cached: bool = True) -> dict[str, Shared]:
         return self.get_objects(['shared'], cached)
+
+    @cached_property
+    def devices(self) -> tuple[NestDevice]:
+        return tuple(self.get_devices().values())
+
+    @cached_property
+    def structures(self) -> tuple[Structure]:
+        return tuple(self.get_structures().values())
+
+    @cached_property
+    def users(self) -> tuple[User]:
+        return tuple(self.get_users().values())
+
+    @cached_property
+    def shared(self) -> tuple[Shared]:
+        return tuple(self.get_shareds().values())
 
     # endregion
 
