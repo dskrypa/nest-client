@@ -224,6 +224,8 @@ class Device(NestObject, type='device', parent_type=None):
     where_id = NestProperty('where_id', default=None)
 
     is_thermostat: bool = False
+    is_camera: bool = False
+    is_smoke_co_alarm: bool = False
 
     def __repr__(self) -> str:
         return f'<{self.__class__.__name__}[{self.serial}, name={self.name!r}, model={self.model_version!r}]>'
@@ -235,6 +237,11 @@ class Device(NestObject, type='device', parent_type=None):
     @cached_property
     def where(self) -> Optional[str]:
         return NEST_WHERE_MAP.get(self.where_id)
+
+    @cached_property
+    def description(self) -> str:
+        name, where = self.name, self.where
+        return f'{name} - {where}' if name and where else name if name else where if where else ''
 
 
 class ThermostatDevice(Device, type='device', parent_type=None, key='hvac_wires'):
