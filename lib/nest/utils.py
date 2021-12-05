@@ -171,9 +171,12 @@ class NestProperty(ClearableCachedProperty):
             f' {self.attr}{attr_path}'
         )
 
-    def __get__(self, obj, cls):
+    def __get__(self, obj: 'NestObject', cls):
         if obj is None:
             return self
+
+        if obj._needs_update:
+            obj.refresh()
 
         value = getattr(obj, self.attr)
         for key in self.path:

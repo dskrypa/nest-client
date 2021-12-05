@@ -97,6 +97,7 @@ class NestObject(ClearableCachedPropertyMixin):
         self.value = value
         self.client = client
         self._refreshed = datetime.now()
+        self._needs_update = False
 
     def __repr__(self) -> str:
         if self.__class__.type:
@@ -130,12 +131,12 @@ class NestObject(ClearableCachedPropertyMixin):
         else:
             return {'object_key': self.key}
 
-    def refresh(self, all: bool = True, subscribe: bool = True, send_meta: bool = True):  # noqa
+    def refresh(self, all: bool = True, subscribe: bool = True, send_meta: bool = True, timeout: float = None):  # noqa
         last = self._refreshed
         if all:
-            self.client.refresh_known_objects(subscribe, send_meta)
+            self.client.refresh_known_objects(subscribe, send_meta, timeout)
         else:
-            self.client.refresh_objects([self], subscribe, send_meta)
+            self.client.refresh_objects([self], subscribe, send_meta, timeout)
         if last == self._refreshed:
             target = 'all objects' if all else self
             log.debug(f'Attempted to refresh {target}, but no fresh data was received for {self}')
@@ -155,6 +156,7 @@ class NestObject(ClearableCachedPropertyMixin):
         self.timestamp = obj_dict['object_timestamp']
         self.value = obj_dict['value']
         self._refreshed = datetime.now()
+        self._needs_update = False
 
     def _subscribe(self, send_meta: bool = False):
         self._maybe_refresh(self.client.subscribe([self], send_meta), 'subscribe')
@@ -169,8 +171,10 @@ class NestObject(ClearableCachedPropertyMixin):
 
     def _set_full(self, data: dict[str, Any], op: str = 'MERGE') -> 'Response':
         payload = {'objects': [{'object_key': self.key, 'op': op, 'value': data}]}
+        self._needs_update = True
         with self.client.transport_url() as client:
             log.debug(f'Submitting {payload=}')
+            self.clear_cached_properties()
             return client.post('v5/put', json=payload)
 
     # region Parent/Child Object Methods
@@ -241,6 +245,9 @@ class Structure(NestObject, type='structure', parent_type=None):
     @cached_property
     def thermostats(self) -> tuple['ThermostatDevice']:
         return tuple(dev for dev in self.devices.values() if isinstance(dev, ThermostatDevice))
+
+    def set_away(self, away: bool):
+        self._set_key('away', away)
 
 
 class User(NestObject, type='user', parent_type=None):

@@ -12,8 +12,10 @@ from contextlib import contextmanager
 from datetime import datetime
 from functools import cached_property
 from threading import RLock
-from typing import TYPE_CHECKING, ContextManager, Union, Optional, Mapping, Iterable
+from typing import ContextManager, Union, Optional, Mapping, Iterable
 from urllib.parse import urlparse
+
+from requests import Response, Session, RequestException
 
 from requests_client.client import RequestsClient
 from requests_client.user_agent import USER_AGENT_CHROME
@@ -23,10 +25,7 @@ from .utils import get_user_cache_dir
 from .config import NestConfig
 from .constants import JWT_URL, NEST_API_KEY, NEST_URL, OAUTH_URL,INIT_BUCKET_TYPES
 from .exceptions import SessionExpired, ConfigError, NestObjectNotFound
-from .entities import NestObjectDict, NestObject, NestObj, NestDevice, Structure, User, Shared
-
-if TYPE_CHECKING:
-    from requests import Response, Session
+from .entities import NestObjectDict, NestObject, NestObj, NestDevice, Structure, User, Shared, Device
 
 __all__ = ['NestWebClient']
 log = logging.getLogger(__name__)
@@ -81,14 +80,14 @@ class NestWebClient:
 
     # region Low Level Methods
 
-    def app_launch(self, bucket_types: Iterable[str] = None) -> 'Response':
+    def app_launch(self, bucket_types: Iterable[str] = None, timeout: float = None) -> 'Response':
         with self.nest_url() as client:
             bucket_types = list(bucket_types) if bucket_types else []
             payload = {'known_bucket_types': bucket_types, 'known_bucket_versions': []}
-            return client.post(f'api/0.1/user/{self.user_id}/app_launch', json=payload)
+            return client.post(f'api/0.1/user/{self.user_id}/app_launch', json=payload, timeout=timeout)
 
-    def get_buckets(self, types: Iterable[str]) -> list[NestObjectDict]:
-        return self.app_launch(types).json()['updated_buckets']
+    def get_buckets(self, types: Iterable[str], timeout: float = None) -> list[NestObjectDict]:
+        return self.app_launch(types, timeout).json()['updated_buckets']
 
     def get_mobile_info(self):
         """Returns the same info as app_launch, but in a slightly different format"""
@@ -148,13 +147,9 @@ class NestWebClient:
                 obj_dict.update(self.get_objects(missing, False))
             return obj_dict
 
+        orig_types = types
         if children:
-            orig_types = types.copy()
-            for p_type in tuple(types):
-                if cls := NestObject._type_cls_map.get(p_type):
-                    types.update(cls.fetch_child_types)
-        else:
-            orig_types = types
+            types = _expand_with_children(types)
 
         log.debug(f'Requesting buckets for {types=}')
         obj_dict = {obj['object_key']: NestObject.from_dict(obj, self) for obj in self.get_buckets(types)}
@@ -174,7 +169,8 @@ class NestWebClient:
         return self._get_object(self.get_objects([type], False, children), type, serial)
 
     def _get_object(self, obj_map: dict[str, NestObj], type: str, serial: str = None) -> NestObj:  # noqa
-        serial = serial or self.config.serial
+        if not serial and (type == 'device' or type in Device.child_types):
+            serial = self.config.serial
         if serial:
             object_key = f'{type}.{serial}'
             try:
@@ -237,26 +233,44 @@ class NestWebClient:
 
     # region Refresh Methods
 
-    def subscribe(self, objects: Iterable[NestObj], send_meta: bool = True) -> list[NestObjectDict]:
+    def subscribe(self, objects: Iterable[NestObj], send_meta: bool = True, timeout: float = 5) -> list[NestObjectDict]:
         with self.transport_url() as client:
-            resp = client.get('v5/subscribe', json={'objects': [obj.subscribe_dict(send_meta) for obj in objects]})
+            payload = {'objects': [obj.subscribe_dict(send_meta) for obj in objects], 'timeout': 863}
+            log.debug(f'Submitting subscribe request with {payload=}')
+            resp = client.post('v5/subscribe', json=payload, timeout=timeout)
             return resp.json()['objects']
 
-    def refresh_known_objects(self, subscribe: bool = True, send_meta: bool = True):
-        self.refresh_objects(self._known_objects.values(), subscribe, send_meta)
+    def refresh_known_objects(self, subscribe: bool = True, send_meta: bool = True, timeout: float = None):
+        self.refresh_objects(self._known_objects.values(), subscribe, send_meta, timeout=timeout)
 
-    def refresh_objects(self, objects: Iterable[NestObj], subscribe: bool = True, send_meta: bool = True):
-        if subscribe:
-            raw_objs = self.subscribe(objects, send_meta)
-        else:
-            raw_objs = self.get_buckets({obj.type for obj in objects})
-
-        for raw_obj in raw_objs:
-            key = raw_obj['object_key']
-            if obj := self._known_objects.get(key):
-                obj._refresh(raw_obj)
+    def refresh_objects(
+        self,
+        objects: Iterable[NestObj],
+        subscribe: bool = True,
+        send_meta: bool = True,
+        *,
+        timeout: float = None,
+        children: bool = True,
+    ):
+        try:
+            if subscribe:
+                objects = set(objects)
+                if children:
+                    for obj in tuple(objects):
+                        objects.update(obj.children.values())
+                raw_objs = self.subscribe(objects, send_meta, timeout or 5)
             else:
-                self._known_objects[key] = NestObject.from_dict(raw_obj, self)
+                types = {obj.type for obj in objects}
+                raw_objs = self.get_buckets(_expand_with_children(types) if children else types, timeout=timeout)
+        except RequestException as e:
+            log.debug(f'Refresh failed due to error: {e}')
+        else:
+            for raw_obj in raw_objs:
+                key = raw_obj['object_key']
+                if obj := self._known_objects.get(key):
+                    obj._refresh(raw_obj)
+                else:
+                    self._known_objects[key] = NestObject.from_dict(raw_obj, self)
 
     # endregion
 
@@ -376,3 +390,11 @@ class NestWebAuth:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self._lock.release()
+
+
+def _expand_with_children(types: Iterable[str]) -> set[str]:
+    types = set(types)
+    for p_type in tuple(types):
+        if cls := NestObject._type_cls_map.get(p_type):
+            types.update(cls.fetch_child_types)
+    return types
