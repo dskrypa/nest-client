@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Union, Optional, TypeVar, Type
 
 from tz_aware_dt.utils import format_duration
 
-from .constants import TARGET_TEMP_TYPES, BUCKET_CHILD_TYPES, NEST_WHERE_MAP
+from .constants import TARGET_TEMP_TYPES, BUCKET_CHILD_TYPES, NEST_WHERE_MAP, ALLOWED_TEMPS
 from .exceptions import NestObjectNotFound
 from .utils import NestProperty, TemperatureProperty, ClearableCachedPropertyMixin, fahrenheit_to_celsius as f2c
 from .utils import cached_classproperty
@@ -136,7 +136,7 @@ class NestObject(ClearableCachedPropertyMixin):
         if all:
             self.client.refresh_known_objects(subscribe, send_meta, timeout)
         else:
-            self.client.refresh_objects([self], subscribe, send_meta, timeout)
+            self.client.refresh_objects([self], subscribe, send_meta, timeout=timeout)
         if last == self._refreshed:
             target = 'all objects' if all else self
             log.debug(f'Attempted to refresh {target}, but no fresh data was received for {self}')
@@ -277,7 +277,6 @@ class Device(NestObject, type='device', parent_type=None):
     model_version = NestProperty('model_version')
     postal_code = NestProperty('postal_code')
     where_id = NestProperty('where_id', default=None)
-
     is_thermostat: bool = False
     is_camera: bool = False
     is_smoke_co_alarm: bool = False
@@ -309,13 +308,10 @@ class ThermostatDevice(Device, type='device', parent_type=None, key='hvac_wires'
     _backplate_temperature = NestProperty('backplate_temperature')  # type: float  # celsius
     backplate_temperature = TemperatureProperty('backplate_temperature')  # type: float  # unit from config
     capability_level = NestProperty('capability_level')
-
     battery_level = NestProperty('battery_level')
     schedule_mode = NestProperty('current_schedule_mode')
-
     humidity = NestProperty('current_humidity')
     fan_current_speed = NestProperty('fan_current_speed')
-
     is_thermostat: bool = True
 
     @cached_property
@@ -368,6 +364,10 @@ class Shared(NestObject, type='shared', parent_type='device'):
         elif self.hvac_fan_state:
             return 'fan running'
         return 'off'
+
+    @cached_property
+    def allowed_temp_range(self) -> tuple[int, int]:
+        return ALLOWED_TEMPS[self.client.config.temp_unit]
 
     @property
     def target_temp_range(self) -> tuple[float, float]:

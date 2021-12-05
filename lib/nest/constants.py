@@ -3,6 +3,11 @@ MAXIMUM_TEMPERATURE_F = 90
 MINIMUM_TEMPERATURE_C = 9
 MAXIMUM_TEMPERATURE_C = 32
 
+ALLOWED_TEMPS = {
+    'c': (MINIMUM_TEMPERATURE_C, MAXIMUM_TEMPERATURE_C),
+    'f': (MINIMUM_TEMPERATURE_F, MAXIMUM_TEMPERATURE_F),
+}
+
 JWT_URL = 'https://nestauthproxyservice-pa.googleapis.com/v1/issue_jwt'
 NEST_API_KEY = 'AIzaSyAdkSIMNc51XGNEAYWasX9UOWkS5P6sZE4'  # public key from Nest's website
 NEST_URL = 'https://home.nest.com'
