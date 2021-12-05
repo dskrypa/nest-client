@@ -125,6 +125,11 @@ class NestObject(ClearableCachedPropertyMixin):
 
     # region Refresh Status Methods
 
+    def needs_refresh(self, interval: float) -> bool:
+        if self._needs_update:
+            return True
+        return (datetime.now() - self._refreshed).total_seconds() >= interval
+
     def subscribe_dict(self, meta: bool = True) -> dict[str, Union[str, int, None]]:
         if meta:
             return {'object_key': self.key, 'object_timestamp': self.timestamp, 'object_revision': self.revision}
