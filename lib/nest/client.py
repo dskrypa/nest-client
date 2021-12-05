@@ -11,7 +11,7 @@ import time
 from contextlib import contextmanager
 from datetime import datetime
 from functools import cached_property
-from threading import RLock
+from threading import RLock, Event
 from typing import ContextManager, Union, Optional, Mapping, Iterable
 from urllib.parse import urlparse
 
@@ -40,6 +40,8 @@ class NestWebClient:
         self._client = RequestsClient(NEST_URL, user_agent_fmt=USER_AGENT_CHROME, headers={'Referer': NEST_URL})
         self.auth = NestWebAuth(self, reauth)
         self._known_objects: dict[str, NestObj] = {}
+        self.not_refreshing = Event()  # cleared while a refresh is pending
+        self.not_refreshing.set()
 
     @property
     def user_id(self):
@@ -244,6 +246,21 @@ class NestWebClient:
         self.refresh_objects(self._known_objects.values(), subscribe, send_meta, timeout=timeout)
 
     def refresh_objects(
+        self,
+        objects: Iterable[NestObj],
+        subscribe: bool = True,
+        send_meta: bool = True,
+        *,
+        timeout: float = None,
+        children: bool = True,
+    ):
+        self.not_refreshing.clear()
+        try:
+            self._refresh_objects(objects, subscribe, send_meta, timeout=timeout, children=children)
+        finally:
+            self.not_refreshing.set()
+
+    def _refresh_objects(
         self,
         objects: Iterable[NestObj],
         subscribe: bool = True,
