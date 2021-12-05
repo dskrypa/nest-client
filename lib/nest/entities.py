@@ -185,14 +185,18 @@ class Structure(NestObject, type='structure', parent_type=None):
         return self.client.get_user(self.value['user'])
 
     @cached_property
+    def swarm(self) -> dict[str, 'Device']:
+        dev_keys = set(self.value['swarm'])
+        return {dev_key: dev for dev_key, dev in self.client.get_devices().items() if dev_key in dev_keys}
+
+    @cached_property
     def devices(self) -> dict[str, 'Device']:
         dev_keys = set(self.value['devices'])
         return {dev_key: dev for dev_key, dev in self.client.get_devices().items() if dev_key in dev_keys}
 
     @cached_property
-    def swarm(self) -> dict[str, 'Device']:
-        dev_keys = set(self.value['swarm'])
-        return {dev_key: dev for dev_key, dev in self.client.get_devices().items() if dev_key in dev_keys}
+    def thermostats(self) -> tuple['ThermostatDevice']:
+        return tuple(dev for dev in self.devices.values() if isinstance(dev, ThermostatDevice))
 
 
 class User(NestObject, type='user', parent_type=None):
