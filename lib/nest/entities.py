@@ -359,6 +359,16 @@ class Shared(NestObject, type='shared', parent_type='device'):
     hvac_heater_state = NestProperty('hvac_heater_state')
     hvac_fan_state = NestProperty('hvac_fan_state')
 
+    @cached_property
+    def hvac_state(self) -> str:
+        if self.hvac_ac_state:
+            return 'cooling'
+        elif self.hvac_heater_state:
+            return 'heating'
+        elif self.hvac_fan_state:
+            return 'fan running'
+        return 'off'
+
     @property
     def target_temp_range(self) -> tuple[float, float]:
         return self.target_temperature_low, self.target_temperature_high
