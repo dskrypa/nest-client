@@ -200,6 +200,12 @@ class NestWebClient:
     def get_users(self, cached: bool = True) -> dict[str, User]:
         return self.get_objects(['user'], cached)
 
+    def get_shared(self, serial: str = None, cached: bool = True) -> User:
+        return self.get_object('shared', serial, cached)
+
+    def get_shareds(self, cached: bool = True) -> dict[str, User]:
+        return self.get_objects(['shared'], cached)
+
     # endregion
 
     # region Refresh Methods
