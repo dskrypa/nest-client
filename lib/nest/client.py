@@ -139,28 +139,39 @@ class NestWebClient:
     def parent_objects(self) -> dict[str, NestObj]:
         return {obj.serial: obj for obj in self.objects.values() if obj.parent_type is None}
 
-    def get_objects(self, types: Iterable[str], cached: bool = True) -> dict[str, NestObj]:
-        if cached and (obj_dict := self.__dict__.get('objects')):
-            types = set(types)
-            if obj_dict := {k: v for k, v in obj_dict.items() if v.type in types}:
-                if missing := types.difference({obj.type for obj in obj_dict.values()}):
-                    obj_dict.update(self.get_objects(missing, False))
-                return obj_dict
+    def get_objects(self, types: Iterable[str], cached: bool = True, children: bool = True) -> dict[str, NestObj]:
+        types = set(types)
+        if cached and (obj_dict := {k: v for k, v in self._known_objects.items() if v.type in types}):
+            found_types = {obj.type for obj in obj_dict.values()}
+            if missing := types.difference(found_types):
+                log.debug(f'Found={found_types} requested={types} - retrieving {missing=}')
+                obj_dict.update(self.get_objects(missing, False))
+            return obj_dict
 
+        if children:
+            orig_types = types.copy()
+            for p_type in tuple(types):
+                if cls := NestObject._type_cls_map.get(p_type):
+                    types.update(cls.fetch_child_types)
+        else:
+            orig_types = types
+
+        log.debug(f'Requesting buckets for {types=}')
         obj_dict = {obj['object_key']: NestObject.from_dict(obj, self) for obj in self.get_buckets(types)}
+        log.debug('Found new objects: {}'.format(', '.join(sorted(obj_dict))))
         self._known_objects.update(obj_dict)
+        if children and orig_types != types:
+            obj_dict = {key: obj for key, obj in obj_dict.items() if obj.type in orig_types}
         return obj_dict
 
-    def get_object(self, type: str, serial: str = None, cached: bool = True) -> NestObj:  # noqa
-        if cached and (obj_dict := self.__dict__.get('objects')):
+    def get_object(self, type: str, serial: str = None, cached: bool = True, children: bool = True) -> NestObj:  # noqa
+        if cached:
             try:
-                return self._get_object(obj_dict, type, serial)
+                return self._get_object(self._known_objects, type, serial)
             except NestObjectNotFound:  # let ValueError propagate
+                log.debug(f'Did not find cached object with {type=} {serial=}')
                 pass  # try fresh objects
-
-        obj = self._get_object(self.get_objects([type]), type, serial)
-        self._known_objects[obj.key] = obj
-        return obj
+        return self._get_object(self.get_objects([type], False, children), type, serial)
 
     def _get_object(self, obj_map: dict[str, NestObj], type: str, serial: str = None) -> NestObj:  # noqa
         serial = serial or self.config.serial
@@ -182,11 +193,11 @@ class NestWebClient:
 
     # region Typed NestObject Getters
 
-    def get_device(self, serial: str = None, cached: bool = True) -> NestDevice:
-        return self.get_object('device', serial, cached)
+    def get_device(self, serial: str = None, cached: bool = True, children: bool = True) -> NestDevice:
+        return self.get_object('device', serial, cached, children)
 
-    def get_devices(self, cached: bool = True) -> dict[str, NestDevice]:
-        return self.get_objects(['device'], cached)
+    def get_devices(self, cached: bool = True, children: bool = True) -> dict[str, NestDevice]:
+        return self.get_objects(['device'], cached, children)
 
     def get_structure(self, serial: str = None, cached: bool = True) -> Structure:
         return self.get_object('structure', serial, cached)

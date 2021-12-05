@@ -24,6 +24,7 @@ __all__ = [
     'get_user_temp_dir',
     'celsius_to_fahrenheit',
     'fahrenheit_to_celsius',
+    'cached_classproperty',
 ]
 ON_WINDOWS = os.name == 'nt'
 _NotSet = object()
@@ -203,6 +204,22 @@ class TemperatureProperty(NestProperty):
         if obj.client.config.temp_unit == 'f':
             return celsius_to_fahrenheit(value_c)
         return value_c
+
+
+class cached_classproperty:
+    def __init__(self, func):
+        self.__doc__ = func.__doc__
+        if not isinstance(func, (classmethod, staticmethod)):
+            func = classmethod(func)
+        self.func = func
+        self.values = {}
+
+    def __get__(self, obj, cls):
+        try:
+            return self.values[cls]
+        except KeyError:
+            self.values[cls] = value = self.func.__get__(obj, cls)()  # noqa
+            return value
 
 # endregion
 

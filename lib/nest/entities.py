@@ -9,13 +9,15 @@ import time
 from collections import defaultdict
 from datetime import datetime
 from functools import cached_property
+from threading import RLock
 from typing import TYPE_CHECKING, Any, Union, Optional, TypeVar, Type
 
 from tz_aware_dt.utils import format_duration
 
 from .constants import TARGET_TEMP_TYPES, BUCKET_CHILD_TYPES, NEST_WHERE_MAP
-from .utils import NestProperty, TemperatureProperty, ClearableCachedPropertyMixin
-from .utils import fahrenheit_to_celsius as f2c
+from .exceptions import NestObjectNotFound
+from .utils import NestProperty, TemperatureProperty, ClearableCachedPropertyMixin, fahrenheit_to_celsius as f2c
+from .utils import cached_classproperty
 
 if TYPE_CHECKING:
     from requests import Response
@@ -30,11 +32,13 @@ NestDevice = TypeVar('NestDevice', bound='Device')
 
 
 class NestObject(ClearableCachedPropertyMixin):
+    __lock = RLock()
+    __instances = {}
     type: Optional[str] = None
     parent_type: Optional[str] = None
-    child_types: Optional[tuple[str, ...]] = None
-    _type_cls_map = {}
-    _sub_type_cls_map = {}
+    child_types: Optional[dict[str, bool]] = None
+    _type_cls_map: dict[str, Type[NestObj]] = {}
+    _sub_type_cls_map: dict[str, dict[str, Type[NestObj]]] = {}
 
     # noinspection PyMethodOverriding
     def __init_subclass__(cls, type: str, parent_type: str = None, key: str = None):  # noqa
@@ -58,7 +62,12 @@ class NestObject(ClearableCachedPropertyMixin):
                 if key in value:
                     cls = sub_cls
                     break
-        return super().__new__(cls)
+        with NestObject.__lock:
+            try:
+                return NestObject.__instances[key]
+            except KeyError:
+                NestObject.__instances[key] = obj = super().__new__(cls)
+                return obj
 
     def __init__(
         self,
@@ -68,6 +77,8 @@ class NestObject(ClearableCachedPropertyMixin):
         value: dict[str, Any],
         client: 'NestWebClient',
     ):
+        if hasattr(self, 'key'):
+            self.clear_cached_properties()
         self.key = key
         self.type, self.serial = key.split('.', 1)
         if self.parent_type is None and self.type != self.__class__.type:
@@ -162,6 +173,39 @@ class NestObject(ClearableCachedPropertyMixin):
             log.debug(f'Submitting {payload=}')
             return client.post('v5/put', json=payload)
 
+    # region Parent/Child Object Methods
+
+    def is_child_of(self, nest_obj: NestObj) -> bool:
+        return nest_obj.is_parent_of(self)
+
+    def is_parent_of(self, nest_obj: NestObj) -> bool:
+        return self.child_types and nest_obj.type in self.child_types and nest_obj.serial == self.serial
+
+    @cached_classproperty
+    def fetch_child_types(cls) -> tuple[str, ...]:
+        if child_types := cls.child_types:
+            return tuple(t for t, fetch in child_types.items() if fetch)
+        return ()
+
+    @cached_property
+    def children(self) -> dict[str, NestObj]:
+        """Mapping of {type: NestObject} for this object's children"""
+        if fetch_child_types := self.fetch_child_types:
+            key_obj_map = self.client.get_objects(fetch_child_types)
+            return {obj.type: obj for obj in key_obj_map.values() if obj.serial == self.serial}
+        return {}
+
+    @cached_property
+    def parent(self) -> Optional[NestObj]:
+        if self.parent_type:
+            try:
+                return self.client.get_object(self.parent_type, self.serial)
+            except NestObjectNotFound:
+                return None
+        return None
+
+    # endregion
+
 
 class Structure(NestObject, type='structure', parent_type=None):
     name = NestProperty('name')
@@ -237,6 +281,10 @@ class Device(NestObject, type='device', parent_type=None):
     @cached_property
     def structure(self) -> Optional[Structure]:
         return next((st for st in self.client.get_structures().values() if self.key in st.devices), None)
+
+    @cached_property
+    def shared(self) -> Optional['Shared']:
+        return self.children.get('shared')
 
     @cached_property
     def where(self) -> Optional[str]:

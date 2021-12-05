@@ -42,42 +42,42 @@ NEST_WHERE_MAP = {
     '00000000-0000-0000-0000-00010000001d': 'Back Door'
 }
 
-USER_CHILD_TYPES = ('buckets', 'message_center', 'user_alert_dialog', 'user_settings')
-STRUCTURE_CHILD_TYPES = (
-    'geofence_info',
-    'partner_programs',
-    'safety',
-    'safety_summary',
-    'structure_history',
-    'structure_metadata',
-    'trip',
-    'utility',
-    'where',
-    'wwn_security'
-)
-DEVICE_CHILD_TYPES = (
-    'cloud_algo',
-    'demand_charge',
-    'demand_response',
-    'demand_response_fleet',
-    'device_alert_dialog',
-    'device_migration',
-    'diagnostics',
-    'energy_latest',
-    'energy_weekly',
-    'found_savings',
-    'hvac_issues',
-    'hvac_partner',
-    'link',
-    'message',
-    'metadata',
-    'rcs_settings',
-    'schedule',
-    'shared',
-    'tou',
-    'track',
-    'tuneups',
-)
+USER_CHILD_TYPES = {'buckets': False, 'message_center': False, 'user_alert_dialog': False, 'user_settings': False}
+STRUCTURE_CHILD_TYPES = {
+    'geofence_info': False,
+    'partner_programs': False,
+    'safety': False,
+    'safety_summary': False,
+    'structure_history': False,
+    'structure_metadata': False,
+    'trip': False,
+    'utility': False,
+    'where': False,
+    'wwn_security': False
+}
+DEVICE_CHILD_TYPES = {
+    'cloud_algo': False,
+    'demand_charge': False,
+    'demand_response': False,
+    'demand_response_fleet': False,
+    'device_alert_dialog': False,
+    'device_migration': False,
+    'diagnostics': False,  # Always fails
+    'energy_latest': False,
+    'energy_weekly': False,
+    'found_savings': False,
+    'hvac_issues': False,  # Always fails
+    'hvac_partner': False,
+    'link': False,
+    'message': True,
+    'metadata': False,
+    'rcs_settings': False,
+    'schedule': False,
+    'shared': True,
+    'tou': False,
+    'track': False,
+    'tuneups': False,
+}
 
 BUCKET_CHILD_TYPES = {'user': USER_CHILD_TYPES, 'device': DEVICE_CHILD_TYPES, 'structure': STRUCTURE_CHILD_TYPES}
 
