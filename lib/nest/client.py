@@ -25,7 +25,10 @@ from .utils import get_user_cache_dir
 from .config import NestConfig
 from .constants import JWT_URL, NEST_API_KEY, NEST_URL, OAUTH_URL,INIT_BUCKET_TYPES
 from .exceptions import SessionExpired, ConfigError, NestObjectNotFound
-from .entities import NestObjectDict, NestObject, NestObj, NestDevice, Structure, User, Shared, Device
+from .entities.base import NestObjectDict, NestObject, NestObj
+from .entities.device import NestDevice, Device, Shared
+from .entities.structure import Structure
+from .entities.user import User
 
 __all__ = ['NestWebClient']
 log = logging.getLogger(__name__)

@@ -44,80 +44,6 @@ class NestSchedule:
             int(day): [entry for i, entry in sorted(sched.items())] for day, sched in sorted(raw_schedule.days.items())
         }
 
-    # region Serialization / De-serialization
-
-    @classmethod
-    def from_file(cls, nest: 'NestWebClient', path: Union[str, Path]) -> 'NestSchedule':
-        path = Path(path)
-        if not path.is_file():
-            raise ValueError(f'Invalid schedule path: {path}')
-
-        with path.open('r', encoding='utf-8') as f:
-            schedule = json.load(f)
-
-        return cls.from_dict(nest, schedule)
-
-    @classmethod
-    def from_dict(cls, nest: 'NestWebClient', schedule: dict[str, Any]) -> 'NestSchedule':
-        from .entities import Schedule
-
-        user_id = f'user.{nest.user_id}'
-        meta = schedule['meta']
-        user_num = meta['user_nums'][user_id]
-        _days = schedule['days']
-        convert = meta['unit'] == 'f'
-        days = {}
-        for day_num, day in enumerate(calendar.day_name):
-            if day_schedule := _days.get(day):
-                days[day_num] = {
-                    i: {
-                        'temp': f2c(temp) if convert else temp,
-                        'touched_by': user_num,
-                        'time': wall_to_secs(tod_str),
-                        'touched_tzo': -14400,
-                        'type': meta['mode'],
-                        'entry_type': 'setpoint',
-                        'touched_user_id': user_id,
-                        'touched_at': int(time.time()),
-                    }
-                    for i, (tod_str, temp) in enumerate(day_schedule.items())
-                }
-            else:
-                days[day_num] = {}
-
-        raw_schedule_dict = {
-            'object_key': f'schedule.{nest.serial}',
-            'value': {'ver': meta['ver'], 'schedule_mode': meta['mode'], 'name': meta['name'], 'days': days},
-        }
-        return cls(Schedule.from_dict(raw_schedule_dict, nest))
-
-    def to_dict(self):
-        schedule = {
-            'meta': {
-                'ver': self._ver,
-                'mode': self._schedule_mode,
-                'name': self._name,
-                'unit': self.config.temp_unit,
-                'user_nums': self.user_nums,
-            },
-            'days': self.as_day_time_temp_map(),
-        }
-        return schedule
-
-    def save(self, path: Union[str, Path], overwrite: bool = False, dry_run: bool = False):
-        path = Path(path)
-        if path.is_file() and not overwrite:
-            raise ValueError(f'Path already exists: {path}')
-        elif not path.parent.exists() and not dry_run:
-            path.parent.mkdir(parents=True)
-
-        prefix = '[DRY RUN] Would save' if dry_run else 'Saving'
-        log.info(f'{prefix} schedule to {path}')
-        with path.open('w', encoding='utf-8', newline='\n') as f:
-            json.dump(self.to_dict(), f, indent=4, sort_keys=False)
-
-    # endregion
-
     # region Schedule Modifiers
 
     def update(self, cron_str: str, action: str, temp: float, dry_run: bool = False):
@@ -151,6 +77,7 @@ class NestSchedule:
         if not 0 <= day < 7:
             raise ValueError(f'Invalid {day=!r} - Expected 0=Sunday ~ 6=Saturday')
         temp = f2c(temp) if self.config.temp_unit == 'f' else temp
+
         time_of_day = wall_to_secs(time_of_day) if isinstance(time_of_day, str) else time_of_day
         if not 0 <= time_of_day < 86400:
             raise ValueError(f'Invalid {time_of_day=!r} ({secs_to_wall(time_of_day)}) - must be > 0 and < 86400')

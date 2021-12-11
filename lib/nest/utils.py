@@ -8,18 +8,11 @@ from functools import cached_property
 from getpass import getuser
 from pathlib import Path
 from tempfile import gettempdir
-from typing import TYPE_CHECKING, Any, Callable
 
 from .__version__ import __title__ as pkg_name
-from .exceptions import DictAttrFieldNotFoundError
-
-if TYPE_CHECKING:
-    from .entities import NestObject
 
 __all__ = [
     'ClearableCachedPropertyMixin',
-    'NestProperty',
-    'TemperatureProperty',
     'get_user_cache_dir',
     'get_user_temp_dir',
     'celsius_to_fahrenheit',
@@ -27,7 +20,6 @@ __all__ = [
     'cached_classproperty',
 ]
 ON_WINDOWS = os.name == 'nt'
-_NotSet = object()
 
 
 # region Unit Conversion Functions
@@ -38,16 +30,6 @@ def celsius_to_fahrenheit(deg_c: float) -> float:
 
 def fahrenheit_to_celsius(deg_f: float) -> float:
     return (deg_f - 32) * 5 / 9
-
-
-def secs_to_wall(seconds: int) -> str:
-    hour, minute = divmod(seconds // 60, 60)
-    return f'{hour:02d}:{minute:02d}'
-
-
-def wall_to_secs(wall: str) -> int:
-    hour, minute = map(int, wall.split(':'))
-    return (hour * 60 + minute) * 60
 
 # endregion
 
@@ -87,11 +69,7 @@ def get_user_temp_dir(*sub_dirs, mode: int = 0o777) -> Path:
 
 
 class ClearableCachedProperty(ABC):
-    _set_name = False
-
-    def __set_name__(self, owner, name):
-        if self._set_name:
-            self.name = name
+    pass
 
 
 # noinspection PyUnresolvedReferences
@@ -122,93 +100,6 @@ class ClearableCachedPropertyMixin:
                 pass
 
 
-class NestProperty(ClearableCachedProperty):
-    def __init__(
-        self,
-        path: str,
-        type: Callable = _NotSet,  # noqa
-        default: Any = _NotSet,
-        default_factory: Callable = _NotSet,
-        delim: str = '.',
-        attr: str = 'value',
-    ):
-        # noinspection PyUnresolvedReferences
-        """
-        Descriptor that acts as a cached property for retrieving values nested in a dict stored in an attribute of the
-        object that this :class:`NestProperty` is a member of.  The value is not accessed or stored until the first
-        time that it is accessed.
-
-        To un-cache a value (causes the descriptor to take over again)::\n
-            >>> del instance.__dict__[attr_name]
-
-        The :class:`ClearableCachedPropertyMixin` mixin class can be used to facilitate clearing all
-        :class:`NestProperty` and any similar cached properties that exist in a given object.
-
-        :param path: The nexted key location in the dict attribute of the value that this NestProperty
-          represents; dict keys should be separated by ``.``, otherwise the delimiter should be provided via ``delim``
-        :param type: Callable that accepts 1 argument; the value of this NestProperty will be passed to it,
-          and the result will be returned as this NestProperty's value (default: no conversion)
-        :param default: Default value to return if a KeyError is encountered while accessing the given path
-        :param default_factory: Callable that accepts no arguments to be used to generate default values
-          instead of an explicit default value
-        :param delim: Separator that was used between keys in the provided path (default: ``.``)
-        :param attr: Name of the attribute in the class that this NestProperty is in that contains the dict that this
-          NestProperty should reference
-        """
-        self.path = [p for p in path.split(delim) if p]
-        self.path_repr = delim.join(self.path)
-        self.attr = attr
-        self.type = type
-        self.name = f'_{self.__class__.__name__}#{self.path_repr}'
-        self.default = default
-        self.default_factory = default_factory
-
-    def __set_name__(self, owner, name):
-        self.name = name
-        attr_path = ''.join('[{!r}]'.format(p) for p in self.path)
-        self.__doc__ = (
-            f'A :class:`NestProperty<nest.utils.NestProperty>` that references this {owner.__name__} instance\'s'
-            f' {self.attr}{attr_path}'
-        )
-
-    def __get__(self, obj: 'NestObject', cls):
-        if obj is None:
-            return self
-
-        if obj._needs_update:
-            obj.refresh()
-
-        value = getattr(obj, self.attr)
-        for key in self.path:
-            try:
-                value = value[key]
-            except KeyError:
-                if self.default is not _NotSet:
-                    value = self.default
-                    break
-                elif self.default_factory is not _NotSet:
-                    value = self.default_factory()
-                    break
-                raise DictAttrFieldNotFoundError(obj, self.name, self.attr, self.path_repr)
-
-        if self.type is not _NotSet:
-            # noinspection PyArgumentList
-            value = self.type(value)
-        if '#' not in self.name:
-            obj.__dict__[self.name] = value
-        return value
-
-
-class TemperatureProperty(NestProperty):
-    def __get__(self, obj: 'NestObject', cls):
-        if obj is None:
-            return self
-        value_c = super().__get__(obj, cls)
-        if obj.client.config.temp_unit == 'f':
-            return celsius_to_fahrenheit(value_c)
-        return value_c
-
-
 class cached_classproperty:
     def __init__(self, func):
         self.__doc__ = func.__doc__
@@ -225,42 +116,3 @@ class cached_classproperty:
             return value
 
 # endregion
-
-
-class replacement_itemgetter:
-    """
-    Return a callable object that fetches the given item(s) from its operand.
-    After f = itemgetter(2), the call f(r) returns r[2].
-    After g = itemgetter(2, 5, 3), the call g(r) returns (r[2], r[5], r[3])
-    """
-    __slots__ = ('_items', '_call', '_repl')
-
-    def __init__(self, item, *items, replacements=None):
-        self._repl = replacements or {}
-        if not items:
-            self._items = (item,)
-
-            def func(obj):
-                val = obj[item]
-                try:
-                    return self._repl[val]
-                except KeyError:
-                    return val
-
-            self._call = func
-        else:
-            self._items = items = (item,) + items
-
-            def func(obj):
-                vals = []
-                for val in (obj[i] for i in items):
-                    try:
-                        vals.append(self._repl[val])
-                    except KeyError:
-                        vals.append(val)
-                return tuple(vals)
-
-            self._call = func
-
-    def __call__(self, obj):
-        return self._call(obj)
