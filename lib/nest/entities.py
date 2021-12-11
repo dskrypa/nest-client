@@ -4,31 +4,45 @@ Classes that represent Nest Structures, Users, Devices/Thermostats, etc.
 :author: Doug Skrypa
 """
 
+import calendar
 import logging
 import time
 from collections import defaultdict
 from datetime import datetime
 from functools import cached_property
 from threading import RLock
-from typing import TYPE_CHECKING, Any, Union, Optional, TypeVar, Type
+from typing import TYPE_CHECKING, Any, Union, Optional, TypeVar, Type, Iterator, Iterable
 
 from tz_aware_dt.utils import format_duration
 
 from .constants import TARGET_TEMP_TYPES, BUCKET_CHILD_TYPES, NEST_WHERE_MAP, ALLOWED_TEMPS
 from .exceptions import NestObjectNotFound
-from .utils import NestProperty, TemperatureProperty, ClearableCachedPropertyMixin, fahrenheit_to_celsius as f2c
-from .utils import cached_classproperty
+from .output import SimpleColumn, Table, Printer
+from .utils import NestProperty, TemperatureProperty, ClearableCachedPropertyMixin, cached_classproperty
+from .utils import secs_to_wall, fahrenheit_to_celsius as f2c, celsius_to_fahrenheit as c2f
 
 if TYPE_CHECKING:
     from requests import Response
     from .client import NestWebClient
 
-__all__ = ['NestObject', 'Structure', 'User', 'Device', 'Shared', 'Schedule', 'EnergyUsage', 'NestObj', 'NestDevice']
+__all__ = [
+    'NestObject',
+    'Structure',
+    'User',
+    'Device',
+    'Shared',
+    'Schedule',
+    'EnergyUsage',
+    'NestObj',
+    'NestDevice',
+    'DaySchedule',
+]
 log = logging.getLogger(__name__)
 
 NestObjectDict = dict[str, Union[str, int, None, dict[str, Any]]]
 NestObj = TypeVar('NestObj', bound='NestObject')
 NestDevice = TypeVar('NestDevice', bound='Device')
+ScheduleEntry = dict[str, str | int | float]
 
 
 class NestObject(ClearableCachedPropertyMixin):
@@ -98,6 +112,7 @@ class NestObject(ClearableCachedPropertyMixin):
         self.revision = revision
         self.value = value
         self.client = client
+        self.config = client.config
         self._refreshed = datetime.now()
         self._needs_update = False
 
@@ -106,6 +121,14 @@ class NestObject(ClearableCachedPropertyMixin):
             return f'<{self.__class__.__name__}[{self.serial}]>'
         else:
             return f'<{self.__class__.__name__}[{self.serial}, type={self.type}]>'
+
+    def to_dict(self) -> NestObjectDict:
+        return {
+            'object_key': self.key,
+            'object_timestamp': self.timestamp,
+            'object_revision': self.revision,
+            'value': self.value,
+        }
 
     @classmethod
     def from_dict(cls: Type[NestObj], obj: NestObjectDict, client: 'NestWebClient') -> NestObj:
@@ -349,9 +372,9 @@ class ThermostatDevice(Device, type='device', parent_type=None, key='hvac_wires'
 
 
 class Shared(NestObject, type='shared', parent_type='device'):
-    name = NestProperty('name')
-    mode = NestProperty('target_temperature_type')  # one of: TARGET_TEMP_TYPES
-    target_temperature_type = NestProperty('target_temperature_type')  # one of: TARGET_TEMP_TYPES
+    name = NestProperty('name')  # type: str
+    mode = NestProperty('target_temperature_type')  # type: str  # one of: TARGET_TEMP_TYPES
+    target_temperature_type = NestProperty('target_temperature_type')  # type: str  # one of: TARGET_TEMP_TYPES
     _target_temperature_high = NestProperty('target_temperature_high')  # type: float  # celsius
     _target_temperature_low = NestProperty('target_temperature_low')  # type: float  # celsius
     _target_temperature = NestProperty('target_temperature')  # type: float  # celsius
@@ -364,9 +387,9 @@ class Shared(NestObject, type='shared', parent_type='device'):
     can_cool = NestProperty('can_cool')  # type: bool
     compressor_lockout_timeout = NestProperty('compressor_lockout_timeout')
     compressor_lockout_enabled = NestProperty('compressor_lockout_enabled')
-    hvac_ac_state = NestProperty('hvac_ac_state')
-    hvac_heater_state = NestProperty('hvac_heater_state')
-    hvac_fan_state = NestProperty('hvac_fan_state')
+    hvac_ac_state = NestProperty('hvac_ac_state')  # type: bool
+    hvac_heater_state = NestProperty('hvac_heater_state')  # type: bool
+    hvac_fan_state = NestProperty('hvac_fan_state')  # type: bool
 
     @property
     def hvac_state(self) -> str:
@@ -384,7 +407,7 @@ class Shared(NestObject, type='shared', parent_type='device'):
 
     @cached_property
     def allowed_temp_range(self) -> tuple[int, int]:
-        return ALLOWED_TEMPS[self.client.config.temp_unit]
+        return ALLOWED_TEMPS[self.config.temp_unit]
 
     @property
     def target_temp_range(self) -> tuple[float, float]:
@@ -396,20 +419,20 @@ class Shared(NestObject, type='shared', parent_type='device'):
         :param high: Maximum temperature to allow in Celsius (air conditioning will turn on above this)
         :return: The raw response
         """
-        if self.client.config.temp_unit == 'f':
+        if self.config.temp_unit == 'f':
             low = f2c(low)
             high = f2c(high)
         return self._set_full({'target_temperature_low': low, 'target_temperature_high': high})
 
     def set_temp(self, temp: float, temporary: bool = False, convert: bool = True) -> 'Response':
-        if convert and self.client.config.temp_unit == 'f':
+        if convert and self.config.temp_unit == 'f':
             temp = f2c(temp)
         adj = 'temporary' if temporary else 'requested'
         log.debug(f'Setting {adj} temp={temp:.1f}')
         return self._set_key('target_temperature', temp)
 
     def set_temp_and_force_run(self, temp: float) -> 'Response':
-        if fahrenheit := self.client.config.temp_unit == 'f':
+        if fahrenheit := self.config.temp_unit == 'f':
             temp = f2c(temp)
         mode = self.mode.upper()
         current = self._current_temperature
@@ -441,15 +464,104 @@ class Shared(NestObject, type='shared', parent_type='device'):
 
 
 class Schedule(NestObject, type='schedule', parent_type='device'):
+    parent: Device | ThermostatDevice
     name = NestProperty('name')
     version = NestProperty('ver')  # type: int
-    mode = NestProperty('schedule_mode')
-    days = NestProperty('days')  # type: dict[str, dict[str, dict[str, Union[str, int, float]]]]
+    mode = NestProperty('schedule_mode')  # type: str
+    _days = NestProperty('days')  # type: dict[str, dict[str, ScheduleEntry]]
     where_id = NestProperty('where_id')
+
+    @cached_property
+    def days(self) -> dict[int, 'DaySchedule']:
+        return {int(day): DaySchedule(day, schedule.values()) for day, schedule in sorted(self._days.items())}
 
     @cached_property
     def where(self) -> str:
         return NEST_WHERE_MAP.get(self.where_id, self.where_id)
+
+    @cached_property
+    def user_id_num_map(self) -> dict[str, int]:
+        return {entry['touched_user_id']: entry['touched_by'] for day in self._days.values() for entry in day.values()}
+
+    def __getitem__(self, day: str | int) -> 'DaySchedule':
+        if isinstance(day, str):
+            day = int(day) if day.isnumeric() else list(map(str.lower, calendar.day_name)).index(day.lower())
+        return self.days[day]
+
+    @classmethod
+    def new(
+        cls,
+        client: 'NestWebClient',
+        days: Iterable['DaySchedule'],
+        mode: str,
+        name: str = 'Current Schedule',
+        version: int = 2,
+        serial: str = None,
+    ) -> 'Schedule':
+        days_dict = {str(day_schedule.num): day_schedule.as_dict() for day_schedule in sorted(days)}
+        value = {'days': days_dict, 'name': name, 'schedule_mode': mode.upper(), 'ver': version}
+        serial = serial or client.config.serial or client.get_device().serial  # raises exc if many/no devices are found
+        return cls(f'schedule.{serial}', None, None, value, client)
+
+    def as_day_time_temp_map(self) -> dict[str, dict[str, float] | None]:
+        """Mapping of {day name: {'HH:MM': temperature}}"""
+        convert = self.config.temp_unit == 'f'
+        return {
+            calendar.day_name[day_num]: sched.as_time_temp_map(convert) if (sched := self.days.get(day_num)) else None
+            for day_num in (6, 0, 1, 2, 3, 4, 5)  # Su M Tu W Th F Sa
+        }
+
+    def format(self, output_format: str = 'table', mode: str = 'pretty'):
+        if output_format == 'table':
+            if mode != 'pretty':
+                raise ValueError(f'Invalid format {mode=} with {output_format=} for {self}')
+
+            schedule = self.as_day_time_temp_map()
+            rows = [{'Day': day, **time_temp_map} for day, time_temp_map in schedule.items() if time_temp_map]
+            times = {t for time_temp_map in schedule.values() for t in time_temp_map if time_temp_map}
+            columns = [SimpleColumn('Day'), *(SimpleColumn(_time, ftype='.1f') for _time in sorted(times))]
+            table = Table(*columns, update_width=True)
+            return table.format_rows(rows, True)
+        else:
+            schedule = self.as_day_time_temp_map() if mode == 'pretty' else self.to_dict()
+            return Printer(output_format).pformat(schedule, sort_keys=False)
+
+    def print(self, output_format: str = 'table', mode: str = 'pretty'):
+        if output_format == 'table':
+            print(f'Schedule name={self.name!r} mode={self.mode!r} ver={self.version!r}\n')
+        print(self.format(output_format, mode))
+
+
+class DaySchedule:
+    def __init__(self, num: str | int, schedule: Iterable[ScheduleEntry], unit: str = 'c'):
+        self.num = int(num)
+        self.day = calendar.day_name[self.num]
+        self.schedule = sorted(schedule, key=lambda entry: entry['time'])
+        if unit[0].lower() == 'f':
+            for entry in self.schedule:
+                entry['temp'] = round(f2c(entry['temp']), 2)
+
+    def __lt__(self, other: 'DaySchedule') -> bool:
+        return self.num < other.num
+
+    def __eq__(self, other: 'DaySchedule') -> bool:
+        return self.num == other.num and self.schedule == other.schedule
+
+    def __getitem__(self, index: int) -> ScheduleEntry:
+        return self.schedule[index]
+
+    def __iter__(self) -> Iterator[tuple[int, float, str]]:
+        for entry in self.schedule:
+            yield entry['time'], entry['temp'], entry['type']
+
+    def as_time_temp_map(self, fahrenheit: bool = False) -> dict[str, float]:
+        if fahrenheit:
+            return {secs_to_wall(d_time): round(c2f(temp), 2) for d_time, temp, mode in self}
+        else:
+            return {secs_to_wall(d_time): temp for d_time, temp, mode in self}
+
+    def as_dict(self) -> dict[str, ScheduleEntry]:
+        return {str(i): entry for i, entry in enumerate(self.schedule)}
 
 
 class EnergyUsage(NestObject, type='energy_latest', parent_type='device'):

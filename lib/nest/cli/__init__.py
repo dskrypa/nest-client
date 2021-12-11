@@ -13,6 +13,7 @@ from .wrapper import wrap_main
 
 if TYPE_CHECKING:
     from nest.client import NestWebClient
+    from nest.entities import Schedule
 
 log = logging.getLogger(__name__)
 SHOW_ITEMS = ('energy', 'weather', 'buckets', 'bucket_names', 'schedule')
@@ -207,22 +208,24 @@ def show_status(nest: 'NestWebClient', details: bool, out_fmt: str):
 
 
 def show_item(nest: 'NestWebClient', item: str, out_fmt: str = None, buckets=None, raw: bool = False):
-    if item == 'energy':
-        data = nest.get_object('energy_latest').value
-    elif item == 'weather':
-        data = nest.get_weather()
-    elif item == 'buckets':
-        data = nest.app_launch(buckets).json()
-        if not raw:
-            data = data['updated_buckets']
-    elif item == 'bucket_names':
-        data = nest.get_object('buckets').value
-    # elif item == 'schedule':
-    #     return nest.get_schedule().print(out_fmt or 'table')
+    if item == 'schedule':
+        schedule = nest.get_object('schedule')  # type: Schedule
+        schedule.print(out_fmt or ('raw' if raw else 'table'), 'raw' if raw else 'pretty')
     else:
-        raise ValueError(f'Unexpected {item=!r}')
+        if item == 'energy':
+            data = nest.get_object('energy_latest').value
+        elif item == 'weather':
+            data = nest.get_weather()
+        elif item == 'buckets':
+            data = nest.app_launch(buckets).json()
+            if not raw:
+                data = data['updated_buckets']
+        elif item == 'bucket_names':
+            data = {obj.type: names for obj, names in nest.get_object('buckets').types_by_parent().items()}
+        else:
+            raise ValueError(f'Unexpected {item=!r}')
 
-    Printer(out_fmt or 'yaml').pprint(data)
+        Printer(out_fmt or 'yaml').pprint(data)
 
 
 def show_full_status(nest, path: str = None, diff: bool = False):

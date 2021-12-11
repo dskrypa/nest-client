@@ -32,20 +32,20 @@ _NotSet = object()
 
 # region Unit Conversion Functions
 
-def celsius_to_fahrenheit(deg_c):
+def celsius_to_fahrenheit(deg_c: float) -> float:
     return (deg_c * 9 / 5) + 32
 
 
-def fahrenheit_to_celsius(deg_f):
+def fahrenheit_to_celsius(deg_f: float) -> float:
     return (deg_f - 32) * 5 / 9
 
 
-def secs_to_wall(seconds: int):
+def secs_to_wall(seconds: int) -> str:
     hour, minute = divmod(seconds // 60, 60)
     return f'{hour:02d}:{minute:02d}'
 
 
-def wall_to_secs(wall: str):
+def wall_to_secs(wall: str) -> int:
     hour, minute = map(int, wall.split(':'))
     return (hour * 60 + minute) * 60
 

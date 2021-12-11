@@ -8,7 +8,6 @@ import calendar
 import json
 import logging
 import time
-from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Union
 
@@ -19,13 +18,14 @@ from .utils import celsius_to_fahrenheit as c2f, fahrenheit_to_celsius as f2c, s
 
 if TYPE_CHECKING:
     from .client import NestWebClient
+    from .entities import Schedule
 
 __all__ = ['NestSchedule']
 log = logging.getLogger(__name__)
 
 
 class NestSchedule:
-    def __init__(self, nest: 'NestWebClient', raw_schedules: list[dict[str, Any]]):
+    def __init__(self, raw_schedule: 'Schedule'):
         """
         .. important::
             Nest represents days as 0=Monday ~ 6=Sunday.  This class uses the same values as cron, i.e., 0=Sunday ~
@@ -35,27 +35,13 @@ class NestSchedule:
             def get_schedule(self: NestWebClient) -> NestSchedule:
                 raw = self.app_launch(['schedule'], raw=True)['updated_buckets']
                 return NestSchedule(self, raw)
-
-        :param nest: The :class:`NestWebClient` from which this schedule originated
-        :param raw_schedules: The result of ``NestWebClient.app_launch(['schedule'], raw=True)['updated_buckets']``
         """
-        # TODO: Accept new Schedule object instead
-        self._nest = nest
-        self.config = nest.config
-        self.object_key = f'schedule.{self._nest.serial}'
-        self.user_id = f'user.{self._nest.user_id}'
-        for entry in raw_schedules:
-            if entry.get('object_key') == self.object_key:
-                self._raw = entry
-                break
-        else:
-            raise ValueError(f'Unable to find an entry for {self.object_key=!r} in the provided raw_schedule')
-        info = self._raw['value']
-        self._ver = info['ver']
-        self._schedule_mode = info['schedule_mode']
-        self._name = info['name']
+        self.raw = raw_schedule
+        self.config = raw_schedule.config
+        self.object_key = raw_schedule.key
+        self.user_id = f'user.{raw_schedule.client.user_id}'
         self._schedule = {
-            int(day): [entry for i, entry in sorted(sched.items())] for day, sched in sorted(info['days'].items())
+            int(day): [entry for i, entry in sorted(sched.items())] for day, sched in sorted(raw_schedule.days.items())
         }
 
     # region Serialization / De-serialization
@@ -73,6 +59,8 @@ class NestSchedule:
 
     @classmethod
     def from_dict(cls, nest: 'NestWebClient', schedule: dict[str, Any]) -> 'NestSchedule':
+        from .entities import Schedule
+
         user_id = f'user.{nest.user_id}'
         meta = schedule['meta']
         user_num = meta['user_nums'][user_id]
@@ -97,11 +85,11 @@ class NestSchedule:
             else:
                 days[day_num] = {}
 
-        raw_schedule = {
+        raw_schedule_dict = {
             'object_key': f'schedule.{nest.serial}',
             'value': {'ver': meta['ver'], 'schedule_mode': meta['mode'], 'name': meta['name'], 'days': days},
         }
-        return cls(nest, [raw_schedule])
+        return cls(Schedule.from_dict(raw_schedule_dict, nest))
 
     def to_dict(self):
         schedule = {
@@ -169,7 +157,7 @@ class NestSchedule:
 
         entry = {
             'temp': temp,
-            'touched_by': self._user_num,
+            'touched_by': self.raw.user_id_num_map[self.user_id],
             'time': time_of_day,
             'touched_tzo': -14400,
             'type': self._schedule_mode,
@@ -204,13 +192,14 @@ class NestSchedule:
         self._update_continuations()
 
     def _update_mode(self, dry_run: bool = False):
-        mode = self._nest.get_mode().lower()
-        sched_mode = self._schedule_mode.lower()
-        if sched_mode != mode:
+        shared = self.raw.parent.shared
+        active_mode = shared.mode.lower()
+        schedule_mode = self.raw.mode.lower()
+        if active_mode != schedule_mode:
             prefix = '[DRY RUN] Would update' if dry_run else 'Updating'
-            log.info(f'{prefix} mode from {mode} to {sched_mode}')
+            log.info(f'{prefix} mode from {active_mode} to {schedule_mode}')
             if not dry_run:
-                self._nest.set_mode(sched_mode)
+                shared.set_mode(schedule_mode)
 
     def push(self, dry_run: bool = False):
         self._update_mode(dry_run)
@@ -221,59 +210,15 @@ class NestSchedule:
         log.info(f'New schedule to be pushed:\n{self.format()}')
         log.debug('Full schedule to be pushed: {}'.format(json.dumps(days, indent=4, sort_keys=True)))
         prefix = '[DRY RUN] Would push' if dry_run else 'Pushing'
-        log.info(f'{prefix} changes to {self._schedule_mode} schedule with name={self._name!r}')
+        schedule_mode = self.raw.mode.lower()
+        log.info(f'{prefix} changes to {schedule_mode} schedule with name={self.raw.name!r}')
         if not dry_run:
+
             value = {'ver': self._ver, 'schedule_mode': self._schedule_mode, 'name': self._name, 'days': days}
             resp = self._nest._post_put(value, self.object_key, 'OVERWRITE')
             log.debug('Push response: {}'.format(json.dumps(resp.json(), indent=4, sort_keys=True)))
 
     # endregion
-
-    def as_day_time_temp_map(self):
-        day_names = calendar.day_name[-1:] + calendar.day_name[:-1]
-        day_time_temp_map = {day: None for day in day_names}
-        convert = self.config.temp_unit == 'f'
-        for day, (day_num, day_schedule) in zip(calendar.day_name, sorted(self._schedule.items())):
-            day_time_temp_map[day] = {
-                secs_to_wall(entry['time']): round(c2f(entry['temp']), 2) if convert else entry['temp']
-                for i, entry in enumerate(day_schedule)
-            }
-        return day_time_temp_map
-
-    def format(self, output_format: str = 'table'):
-        schedule = self.as_day_time_temp_map()
-        if output_format == 'table':
-            times = set()
-            rows = []
-            for day, time_temp_map in schedule.items():
-                times.update(time_temp_map)
-                row = time_temp_map.copy()
-                row['Day'] = day
-                rows.append(row)
-
-            columns = [SimpleColumn('Day')]
-            columns.extend(SimpleColumn(_time, ftype='.1f') for _time in sorted(times))
-            table = Table(*columns, update_width=True)
-            return table.format_rows(rows, True)
-        else:
-            return Printer(output_format).pformat(schedule, sort_keys=False)
-
-    def print(self, output_format: str = 'table'):
-        if output_format == 'table':
-            print(f'Schedule name={self._name!r} mode={self._schedule_mode!r} ver={self._ver!r}\n')
-        print(self.format(output_format))
-
-    @cached_property
-    def user_nums(self):
-        return {
-            e['touched_user_id']: e['touched_by']
-            for d, entries in self._schedule.items()
-            for e in entries if 'touched_user_id' in e
-        }
-
-    @cached_property
-    def _user_num(self):
-        return self.user_nums[self.user_id]
 
     def _find_last(self, day: int):
         while (prev_day := _previous_day(day)) != day:
