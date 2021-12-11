@@ -13,7 +13,6 @@ from .wrapper import wrap_main
 
 if TYPE_CHECKING:
     from nest.client import NestWebClient
-    from nest.entities import NestObj, NestDevice, ThermostatDevice, Shared
 
 log = logging.getLogger(__name__)
 SHOW_ITEMS = ('energy', 'weather', 'buckets', 'bucket_names', 'schedule')
@@ -134,10 +133,10 @@ def main():
 
 
 def control_thermostat(nest: 'NestWebClient', action: str, args):
-    from nest.entities import Shared, ThermostatDevice
+    from nest.entities import ThermostatDevice
 
+    thermostat = ThermostatDevice.find(nest)
     if action == 'fan':
-        thermostat = ThermostatDevice.find(nest)
         if args.state == 'on':
             thermostat.start_fan(args.duration)
         elif args.state == 'off':
@@ -145,33 +144,17 @@ def control_thermostat(nest: 'NestWebClient', action: str, args):
         else:
             raise ValueError(f'Unexpected {args.state=!r}')
     else:
-        shared = Shared.find(nest)
         if action == 'temp':
             if args.only_set:
-                shared.set_temp(args.temp)
+                thermostat.shared.set_temp(args.temp)
             else:
-                shared.set_temp_and_force_run(args.temp)
+                thermostat.shared.set_temp_and_force_run(args.temp)
         elif action == 'range':
-            shared.set_temp_range(args.low, args.high)
+            thermostat.shared.set_temp_range(args.low, args.high)
         elif action == 'mode':
-            shared.set_mode(args.mode)
+            thermostat.shared.set_mode(args.mode)
         else:
             raise ValueError(f'Unexpected {action=}')
-
-
-def _get_device(nest: 'NestWebClient', objs: dict[str, 'NestObj']) -> 'NestDevice':
-    devices = [obj for obj in objs.values() if obj.type == 'device']
-    if len(devices) == 1:
-        return devices[0]
-    elif not devices:
-        raise RuntimeError(f'No devices found from {nest}')
-    else:
-        if serial := nest.config.serial:
-            if device := objs.get(f'device.{serial}'):
-                return device
-            raise RuntimeError(f'Device not found: {serial} (found: {devices})')
-        else:
-            raise RuntimeError(f'Found {len(devices)} devices and no default device serial was configured: {devices}')
 
 
 def _convert_temp_values(status: dict[str, dict[str, Any]]):
@@ -187,12 +170,11 @@ def _convert_temp_values(status: dict[str, dict[str, Any]]):
 
 
 def show_status(nest: 'NestWebClient', details: bool, out_fmt: str):
-    objs = nest.get_objects(['device', 'shared'])
-    device = _get_device(nest, objs)  # type: ThermostatDevice
-    shared = objs[f'shared.{device.serial}']  # type: Shared
+    from nest.entities import ThermostatDevice
 
+    device = ThermostatDevice.find(nest)
     if details:
-        status = {'device': device.value, 'shared': shared.value}
+        status = {'device': device.value, 'shared': device.shared.value}
         if nest.config.temp_unit == 'f':
             _convert_temp_values(status)
         Printer(out_fmt).pprint(status)
@@ -209,22 +191,14 @@ def show_status(nest: 'NestWebClient', details: bool, out_fmt: str):
             fix_ansi_width=True,
         )
 
-        """
-        While heating:
-            hvac_ac_state: false
-            hvac_fan_state: true
-            hvac_heater_state: true
-        """
-
-        current = shared.current_temperature
-        target = shared.target_temperature
-        target_lo = shared.target_temperature_low
-        target_hi = shared.target_temperature_high
+        current = device.shared.current_temperature
+        target = device.shared.target_temperature
+        target_lo, target_hi = device.shared.target_temp_range
         status_table = {
             'Mode': colored(mode, 14 if mode == 'COOL' else 13 if mode == 'RANGE' else 9),
             'Humidity': device.humidity,
             'Temperature': colored('{:>11.1f}'.format(current), 11),
-            'Fan': colored('OFF', 8) if device.fan_current_speed == 'off' else colored('RUNNING', 10),
+            'Fan': colored('RUNNING', 10) if device.shared.running else colored('OFF', 8),
             'Target (low)': colored('{:>12.1f}'.format(target_lo), 14 if target_lo < current else 9),
             'Target (high)': colored('{:>13.1f}'.format(target_hi), 14 if target_hi < current else 9),
             'Target': colored('{:>6.1f}'.format(target), 14 if target < current else 9),

@@ -161,31 +161,50 @@ class NestWebClient:
             obj_dict = {key: obj for key, obj in obj_dict.items() if obj.type in orig_types}
         return obj_dict
 
-    def get_object(self, type: str, serial: str = None, cached: bool = True, children: bool = True) -> NestObj:  # noqa
+    def get_object(
+        self,
+        type: str,  # noqa
+        serial: str = None,
+        cached: bool = True,
+        children: bool = True,
+        _sub_type_key: str = None,
+    ) -> NestObj:
         if cached:
             try:
                 return self._get_object(self._known_objects, type, serial)
             except NestObjectNotFound:  # let ValueError propagate
                 log.debug(f'Did not find cached object with {type=} {serial=}')
                 pass  # try fresh objects
-        return self._get_object(self.get_objects([type], False, children), type, serial)
+        return self._get_object(self.get_objects([type], False, children), type, serial, _sub_type_key)
 
-    def _get_object(self, obj_map: dict[str, NestObj], type: str, serial: str = None) -> NestObj:  # noqa
+    def _get_object(
+        self, obj_dict: dict[str, NestObj], type: str, serial: str = None, _sub_type_key: str = None  # noqa
+    ) -> NestObj:
         if not serial and (type == 'device' or type in Device.child_types):
             serial = self.config.serial
         if serial:
             object_key = f'{type}.{serial}'
             try:
-                return obj_map[object_key]
+                obj = obj_dict[object_key]
             except KeyError:
-                raise NestObjectNotFound(f'Could not find {object_key=} (found={list(obj_map)})')
-        else:
-            if len(obj_map) == 1:
-                return next(iter(obj_map.values()))
-            elif not obj_map:
-                raise NestObjectNotFound(f'No {type=} objects were found from {self}')
+                raise NestObjectNotFound(f'Could not find {object_key=} (found={list(obj_dict)})')
             else:
-                raise ValueError(f'A serial number is required - found {len(obj_map)} {type=} objects: {list(obj_map)}')
+                if _sub_type_key and _sub_type_key not in obj.value:
+                    raise ValueError(f'Invalid {serial=} for {_type_not_found_description(type, _sub_type_key)}')
+                else:
+                    return obj
+        else:
+            if _sub_type_key:
+                obj_dict = {key: obj for key, obj in obj_dict.items() if obj.sub_type_key == _sub_type_key}
+
+            if (ko_count := len(obj_dict)) == 1:
+                return next(iter(obj_dict.values()))
+            else:
+                desc = _type_not_found_description(type, _sub_type_key)
+                if not obj_dict:
+                    raise NestObjectNotFound(f'No {desc} objects were found from {self}')
+                else:
+                    raise ValueError(f'A serial number is required - found {ko_count} {desc} objects: {list(obj_dict)}')
 
     # endregion
 
@@ -415,3 +434,13 @@ def _expand_with_children(types: Iterable[str]) -> set[str]:
         if cls := NestObject._type_cls_map.get(p_type):
             types.update(cls.fetch_child_types)
     return types
+
+
+def _type_not_found_description(obj_type: str, sub_type_key: str) -> str:
+    if sub_type_key:
+        try:
+            return f'cls={NestObject._sub_type_cls_map[obj_type][sub_type_key].__name__}'
+        except KeyError:
+            return f'{obj_type=} with sub-type key={sub_type_key!r}'
+    else:
+        return f'{obj_type=}'

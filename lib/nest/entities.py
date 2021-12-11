@@ -37,6 +37,7 @@ class NestObject(ClearableCachedPropertyMixin):
     type: Optional[str] = None
     parent_type: Optional[str] = None
     child_types: Optional[dict[str, bool]] = None
+    sub_type_key: Optional[str] = None
     _type_cls_map: dict[str, Type[NestObj]] = {}
     _sub_type_cls_map: dict[str, dict[str, Type[NestObj]]] = {}
 
@@ -44,6 +45,7 @@ class NestObject(ClearableCachedPropertyMixin):
     def __init_subclass__(cls, type: str, parent_type: str = None, key: str = None):  # noqa
         cls.type = type
         cls.parent_type = parent_type
+        cls.sub_type_key = key
         if key:
             cls._sub_type_cls_map.setdefault(type, {})[key] = cls
         else:
@@ -114,14 +116,18 @@ class NestObject(ClearableCachedPropertyMixin):
         if type and cls.type is not None and type != cls.type:
             expected = cls._type_cls_map.get(type, NestObject).__name__
             raise ValueError(f'Use {expected} - {cls.__name__} is incompatible with {type=}')
-        return client.get_object(type or cls.type, serial)
+        return client.get_object(type or cls.type, serial, _sub_type_key=cls.sub_type_key)
 
     @classmethod
     def find_all(cls: Type[NestObj], client: 'NestWebClient', type: str = None) -> dict[str, NestObj]:  # noqa
         if type and cls.type is not None and type != cls.type:
             expected = cls._type_cls_map.get(type, NestObject).__name__
             raise ValueError(f'Use {expected} - {cls.__name__} is incompatible with {type=}')
-        return client.get_objects([type or cls.type])
+        obj_dict = client.get_objects([type or cls.type])
+        if sub_type_key := cls.sub_type_key:
+            return {key: obj for key, obj in obj_dict.items() if obj.sub_type_key == sub_type_key}
+        else:
+            return obj_dict
 
     # region Refresh Status Methods
 
@@ -362,7 +368,7 @@ class Shared(NestObject, type='shared', parent_type='device'):
     hvac_heater_state = NestProperty('hvac_heater_state')
     hvac_fan_state = NestProperty('hvac_fan_state')
 
-    @cached_property
+    @property
     def hvac_state(self) -> str:
         if self.hvac_ac_state:
             return 'cooling'
@@ -371,6 +377,10 @@ class Shared(NestObject, type='shared', parent_type='device'):
         elif self.hvac_fan_state:
             return 'fan running'
         return 'off'
+
+    @property
+    def running(self) -> bool:
+        return self.hvac_fan_state or self.hvac_ac_state or self.hvac_heater_state
 
     @cached_property
     def allowed_temp_range(self) -> tuple[int, int]:
