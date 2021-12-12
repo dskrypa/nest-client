@@ -217,7 +217,7 @@ def show_item(nest: 'NestWebClient', item: str, out_fmt: str = None, buckets=Non
         elif item == 'weather':
             data = nest.get_weather()
         elif item == 'buckets':
-            data = nest.app_launch(buckets).json()
+            data = nest.app_launch(buckets)
             if not raw:
                 data = data['updated_buckets']
         elif item == 'bucket_names':

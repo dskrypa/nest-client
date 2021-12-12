@@ -12,11 +12,11 @@ from contextlib import contextmanager
 from datetime import datetime
 from functools import cached_property
 from threading import RLock, Event
-from typing import ContextManager, Union, Optional, Mapping, Iterable
+from typing import ContextManager, Union, Optional, Mapping, Iterable, Any
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
-from requests import Response, Session, RequestException
+from requests import Session, RequestException
 
 from requests_client.client import RequestsClient
 from requests_client.user_agent import USER_AGENT_CHROME
@@ -39,23 +39,18 @@ class NestWebClient:
     _nest_host_port = ('home.nest.com', None)
 
     def __init__(self, config_path: str = None, reauth: bool = False, overrides: Mapping[str, Optional[str]] = None):
-        self._user_id = None
         self.config = NestConfig(config_path, overrides)
         self._client = RequestsClient(NEST_URL, user_agent_fmt=USER_AGENT_CHROME, headers={'Referer': NEST_URL})
-        self.auth = NestWebAuth(self, reauth)
+        self.auth = NestWebAuth(self.config, self._client, reauth)
         self._known_objects: dict[str, NestObj] = {}
         self.not_refreshing = Event()  # cleared while a refresh is pending
         self.not_refreshing.set()
+        self._latest_transport_url = None
+        self._last_known_reauth = datetime.now()
 
     @property
     def user_id(self):
-        if self._user_id is None:
-            self.auth.maybe_refresh_login()
-        return self._user_id
-
-    @user_id.setter
-    def user_id(self, value):
-        self._user_id = value
+        return self.auth.user_id
 
     # region URLs
 
@@ -73,27 +68,31 @@ class NestWebClient:
             self._client.host, self._client.port = self._nest_host_port
             yield self._client
 
-    @cached_property
-    def service_urls(self):
-        return self.app_launch().json()['service_urls']
+    @property
+    def _transport_host_port(self) -> tuple[str, int | None]:
+        if self._needs_transport_url_update():
+            self.app_launch()
+        return self._latest_transport_url.hostname, self._latest_transport_url.port
 
-    @cached_property
-    def _transport_host_port(self):
-        transport_url = urlparse(self.service_urls['urls']['transport_url'])
-        return transport_url.hostname, transport_url.port
+    def _needs_transport_url_update(self) -> bool:
+        return self._latest_transport_url is None or self.auth.last_reauth > self._last_known_reauth
 
     # endregion
 
     # region Low Level Methods
 
-    def app_launch(self, bucket_types: Iterable[str] = None, timeout: float = None) -> 'Response':
+    def app_launch(self, bucket_types: Iterable[str] = None, timeout: float = None) -> dict[str, Any]:
         with self.nest_url() as client:
             bucket_types = list(bucket_types) if bucket_types else []
             payload = {'known_bucket_types': bucket_types, 'known_bucket_versions': []}
-            return client.post(f'api/0.1/user/{self.user_id}/app_launch', json=payload, timeout=timeout)
+            resp = client.post(f'api/0.1/user/{self.user_id}/app_launch', json=payload, timeout=timeout).json()
+            if self._needs_transport_url_update():
+                self._latest_transport_url = urlparse(resp['service_urls']['urls']['transport_url'])
+                self._last_known_reauth = self.auth.last_reauth
+            return resp
 
     def get_buckets(self, types: Iterable[str], timeout: float = None) -> list[NestObjectDict]:
-        return self.app_launch(types, timeout).json()['updated_buckets']
+        return self.app_launch(types, timeout)['updated_buckets']
 
     def get_mobile_info(self):
         """Returns the same info as app_launch, but in a slightly different format"""
@@ -124,7 +123,7 @@ class NestWebClient:
         :return dict: The parsed response
         """
         if zip_code is None:
-            resp = self.app_launch().json()
+            resp = self.app_launch()
             location = next(iter(resp['weather_for_structures'].values()))['location']
             zip_code = location['zip']
             country_code = country_code or location['country']
@@ -316,15 +315,23 @@ class NestWebClient:
 
 
 class NestWebAuth:
-    def __init__(self, client: 'NestWebClient', force_reauth: bool = False):
-        self.client = client
-        self.config = client.config
+    def __init__(self, config: NestConfig, client: RequestsClient, force_reauth: bool = False):
+        self._client = client
+        self.config = config
         if 'oauth' not in self.config:
             raise ConfigError('Missing required oauth configs')
         self.cache_path = get_user_cache_dir('nest').joinpath('session.pickle')
         self.force_reauth = force_reauth
+        self.last_reauth = None
         self.expiry = None
         self._lock = RLock()
+        self._user_id = None
+
+    @property
+    def user_id(self) -> str:
+        if self._user_id is None:
+            self.maybe_refresh_login()
+        return self._user_id
 
     @property
     def needs_login_refresh(self) -> bool:
@@ -334,20 +341,13 @@ class NestWebAuth:
     def maybe_refresh_login(self):
         with self._lock:
             if self.needs_login_refresh:
-                self._reset_urls()
                 try:
                     self._load_cached()
                 except SessionExpired as e:
                     log.debug(e)
                     self._login_via_google()
                     self.force_reauth = False
-
-    def _reset_urls(self):
-        for key in ('service_urls', '_transport_host_port'):
-            try:
-                del self.client.__dict__[key]
-            except KeyError:
-                pass
+                self.last_reauth = datetime.now()
 
     def _load_cached(self):
         if self.force_reauth:
@@ -371,22 +371,22 @@ class NestWebAuth:
 
     @property
     def _session(self) -> 'Session':
-        return self.client._client.session
+        return self._client.session
 
     def _register_session(self, expiry: datetime, userid: str, jwt_token: str, cookies=None, save: bool = False):
         self.expiry = expiry
-        self.client.user_id = userid
-        self.client._client.session.headers['Authorization'] = f'Basic {jwt_token}'
+        self._user_id = userid
+        self._session.headers['Authorization'] = f'Basic {jwt_token}'
         if cookies is not None:
             for cookie in cookies:
-                self.client._client.session.cookies.set_cookie(cookie)
+                self._session.cookies.set_cookie(cookie)
 
         if save:
             if not self.cache_path.parent.exists():
                 self.cache_path.parent.mkdir(parents=True)
             log.debug(f'Saving session info in cache: {self.cache_path}')
             with self.cache_path.open('wb') as f:
-                pickle.dump((expiry, userid, jwt_token, list(self.client._client.session.cookies)), f)
+                pickle.dump((expiry, userid, jwt_token, list(self._session.cookies)), f)
 
     def _get_oauth_token(self) -> str:
         headers = {
@@ -395,8 +395,6 @@ class NestWebAuth:
             'Referer': 'https://accounts.google.com/o/oauth2/iframe',
             'cookie': self.config.oauth_cookie,
         }
-        # token_url = self.config.get('oauth', 'token_url', 'OAuth Token URL', required=True)
-        # resp = self._session.get(token_url, headers=headers)
         params = {
             'action': ['issueToken'],
             'response_type': ['token id_token'],
@@ -424,7 +422,7 @@ class NestWebAuth:
         claims = resp['claims']
         expiry = datetime.strptime(claims['expirationTime'], '%Y-%m-%dT%H:%M:%S.%fZ')
         self._register_session(expiry, claims['subject']['nestId']['id'], resp['jwt'], save=True)
-        log.debug(f'Initialized session for user={self.client.user_id!r} with expiry={self._localize(expiry)}')
+        log.debug(f'Initialized session for user={self._user_id!r} with expiry={self._localize(expiry)}')
 
     def __enter__(self):
         self._lock.acquire()
