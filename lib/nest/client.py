@@ -14,12 +14,12 @@ from functools import cached_property
 from threading import RLock, Event
 from typing import ContextManager, Union, Optional, Mapping, Iterable
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 from requests import Response, Session, RequestException
 
 from requests_client.client import RequestsClient
 from requests_client.user_agent import USER_AGENT_CHROME
-from tz_aware_dt.tz_aware_dt import datetime_with_tz, localize, TZ_LOCAL, TZ_UTC
 
 from .utils import get_user_cache_dir
 from .config import NestConfig
@@ -32,6 +32,7 @@ from .entities.user import User
 
 __all__ = ['NestWebClient']
 log = logging.getLogger(__name__)
+UTC = ZoneInfo('UTC')
 
 
 class NestWebClient:
@@ -328,7 +329,7 @@ class NestWebAuth:
     @property
     def needs_login_refresh(self) -> bool:
         with self._lock:
-            return self.force_reauth or self.expiry is None or self.expiry < datetime.now(TZ_LOCAL)
+            return self.force_reauth or self.expiry is None or self.expiry < datetime.utcnow()
 
     def maybe_refresh_login(self):
         with self._lock:
@@ -358,11 +359,13 @@ class NestWebAuth:
                 except (TypeError, ValueError) as e:
                     raise SessionExpired(f'Found a cached session, but encountered an error loading it: {e}')
 
-            if expiry < datetime.now(TZ_LOCAL) or any(cookie.expires < time.time() for cookie in cookies):
+            if expiry.tzinfo:
+                expiry = expiry.astimezone(UTC).replace(tzinfo=None)
+            if expiry < datetime.utcnow() or any(cookie.expires < time.time() for cookie in cookies):
                 raise SessionExpired('Found a cached session, but it expired')
 
             self._register_session(expiry, userid, jwt_token, cookies)
-            log.debug(f'Loaded session for user={userid} with expiry={localize(expiry)}')
+            log.debug(f'Loaded session for user={userid} with expiry={self._localize(expiry)}')
         else:
             raise SessionExpired('No cached session was found')
 
@@ -419,9 +422,9 @@ class NestWebAuth:
         resp = self._session.post(JWT_URL, params=params, headers=headers).json()
         log.log(9, 'Initialized session; response: {}'.format(json.dumps(resp, indent=4, sort_keys=True)))
         claims = resp['claims']
-        expiry = datetime_with_tz(claims['expirationTime'], '%Y-%m-%dT%H:%M:%S.%fZ', TZ_UTC).astimezone(TZ_LOCAL)
+        expiry = datetime.strptime(claims['expirationTime'], '%Y-%m-%dT%H:%M:%S.%fZ')
         self._register_session(expiry, claims['subject']['nestId']['id'], resp['jwt'], save=True)
-        log.debug(f'Initialized session for user={self.client.user_id!r} with expiry={localize(expiry)}')
+        log.debug(f'Initialized session for user={self.client.user_id!r} with expiry={self._localize(expiry)}')
 
     def __enter__(self):
         self._lock.acquire()
@@ -429,6 +432,9 @@ class NestWebAuth:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self._lock.release()
+
+    def _localize(self, expiry: datetime) -> str:
+        return expiry.replace(tzinfo=UTC).astimezone(self.config.time_zone).strftime('%Y-%m-%d %H:%M:%S %Z')
 
 
 def _expand_with_children(types: Iterable[str]) -> set[str]:

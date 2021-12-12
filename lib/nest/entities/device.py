@@ -1,5 +1,5 @@
 """
-Classes that represent Nest Structures, Users, Devices/Thermostats, etc.
+Classes that represent Nest Devices/Thermostats and related information.
 
 :author: Doug Skrypa
 """
@@ -7,22 +7,18 @@ Classes that represent Nest Structures, Users, Devices/Thermostats, etc.
 import logging
 import time
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, Union, Optional, TypeVar
-
-from tz_aware_dt.utils import format_duration
+from typing import TYPE_CHECKING, Any, Optional
 
 from ..constants import TARGET_TEMP_TYPES, NEST_WHERE_MAP, ALLOWED_TEMPS
-from ..utils import fahrenheit_to_celsius as f2c
+from ..utils import format_duration, fahrenheit_to_celsius as f2c
 from .base import NestObject, NestProperty, TemperatureProperty
 
 if TYPE_CHECKING:
     from requests import Response
     from .structure import Structure
 
-__all__ = ['Device', 'Shared', 'EnergyUsage', 'NestDevice']
+__all__ = ['Device', 'ThermostatDevice', 'Shared', 'EnergyUsage', 'EnergyUsageDay', 'NestDevice']
 log = logging.getLogger(__name__)
-
-NestDevice = TypeVar('NestDevice', bound='Device')
 
 
 class Device(NestObject, type='device', parent_type=None):
@@ -48,7 +44,7 @@ class Device(NestObject, type='device', parent_type=None):
         return self.children.get('shared')
 
     @cached_property
-    def where(self) -> Optional[str]:
+    def where(self) -> str | None:
         return NEST_WHERE_MAP.get(self.where_id)
 
     @cached_property
@@ -74,7 +70,7 @@ class ThermostatDevice(Device, type='device', parent_type=None, key='hvac_wires'
         return {k[4:]: v for k, v in self.value.items() if k.startswith('has_')}
 
     @cached_property
-    def fan(self) -> dict[str, Union[str, bool, int]]:
+    def fan(self) -> dict[str, str | bool | int]:
         return {k[4:]: v for k, v in self.value.items() if k.startswith('fan_')}
 
     def start_fan(self, duration: int = 1800) -> 'Response':
@@ -91,6 +87,7 @@ class ThermostatDevice(Device, type='device', parent_type=None, key='hvac_wires'
 
 
 class Shared(NestObject, type='shared', parent_type='device'):
+    parent: 'NestDevice'
     name = NestProperty('name')  # type: str
     mode = NestProperty('target_temperature_type')  # type: str  # one of: TARGET_TEMP_TYPES
     target_temperature_type = NestProperty('target_temperature_type')  # type: str  # one of: TARGET_TEMP_TYPES
@@ -183,6 +180,7 @@ class Shared(NestObject, type='shared', parent_type='device'):
 
 
 class EnergyUsage(NestObject, type='energy_latest', parent_type='device'):
+    parent: 'NestDevice'
     recent_max_used = NestProperty('recent_max_used')  # type: int
 
     @cached_property
@@ -203,7 +201,7 @@ class EnergyUsageDay:
     recent_avg_used = NestProperty('recent_avg_used')  # type: int
     usage_over_avg = NestProperty('usage_over_avg')  # type: int
     cycles = NestProperty('cycles')  # type: list[dict[str, int]]
-    events = NestProperty('events')  # type: list[dict[str, Union[str, int, float, bool]]]
+    events = NestProperty('events')  # type: list[dict[str, str | int | float | bool]]
     rates = NestProperty('rates')  # type: list[dict[str, Any]]
     system_capabilities = NestProperty('system_capabilities')  # type: int
     incomplete_fields = NestProperty('incomplete_fields')  # type: int
@@ -211,3 +209,6 @@ class EnergyUsageDay:
     def __init__(self, parent: 'EnergyUsage', value: dict[str, Any]):
         self.parent = parent
         self.value = value
+
+
+NestDevice = Device | ThermostatDevice

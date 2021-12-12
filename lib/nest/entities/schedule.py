@@ -21,7 +21,7 @@ from ..exceptions import TimeNotFound
 from ..output import SimpleColumn, Table, Printer
 from ..utils import fahrenheit_to_celsius as f2c, celsius_to_fahrenheit as c2f
 from .base import NestObject, NestProperty
-from .device import Device, ThermostatDevice
+from .device import NestDevice
 
 if TYPE_CHECKING:
     from ..client import NestWebClient
@@ -33,7 +33,7 @@ ScheduleEntryDict = dict[str, str | int | float]
 
 
 class Schedule(NestObject, type='schedule', parent_type='device'):
-    parent: Device | ThermostatDevice
+    parent: NestDevice
     name = NestProperty('name')
     version = NestProperty('ver')  # type: int
     mode = NestProperty('schedule_mode')  # type: str
@@ -268,16 +268,6 @@ class ScheduleEntry:
 
     def as_dict(self) -> dict[str, str | int | float]:
         return asdict(self)
-        # return {
-        #     'temp': self.temp,
-        #     'touched_by': self.touched_by,
-        #     'time': self.time,
-        #     'touched_tzo': self.touched_tzo,
-        #     'type': self.type,
-        #     'entry_type': self.entry_type,
-        #     'touched_user_id': self.touched_user_id,
-        #     'touched_at': self.touched_at,
-        # }
 
 
 def _fields(obj):

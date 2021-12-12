@@ -4,20 +4,16 @@ Library for interacting with the Nest thermostat via the cloud API
 :author: Doug Skrypa
 """
 
-import calendar
 import json
 import logging
 import time
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Union
+from typing import TYPE_CHECKING, Union
 
 from .cron import NestCronSchedule
 from .exceptions import TimeNotFound
-from .output import SimpleColumn, Table, Printer
-from .utils import celsius_to_fahrenheit as c2f, fahrenheit_to_celsius as f2c, secs_to_wall, wall_to_secs
+from .utils import fahrenheit_to_celsius as f2c
 
 if TYPE_CHECKING:
-    from .client import NestWebClient
     from .entities import Schedule
 
 __all__ = ['NestSchedule']
@@ -177,17 +173,3 @@ class NestSchedule:
                     if not any(e['time'] == 0 for e in day_sched):
                         day_sched.insert(0, continuation)
                 break
-
-
-def _previous_day(day: int) -> int:
-    return 6 if day == 0 else day - 1
-
-
-def _next_day(day: int) -> int:
-    return 0 if day == 6 else day + 1
-
-
-def _continuation_day(day: int) -> int:
-    days = list(range(7))
-    candidates = days[day+1:] + days[:day]
-    return candidates[0]

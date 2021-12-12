@@ -6,9 +6,12 @@ Nest config
 
 import logging
 from configparser import ConfigParser, NoSectionError, NoOptionError
+from datetime import datetime
 from functools import cached_property
+from importlib import resources
 from pathlib import Path
 from typing import Optional, Mapping
+from zoneinfo import ZoneInfo, available_timezones
 
 __all__ = ['NestConfig', 'DEFAULT_CONFIG_PATH', 'CONFIG_ITEMS']
 log = logging.getLogger(__name__)
@@ -38,7 +41,15 @@ class NestConfig:
     def __contains__(self, key: str) -> bool:
         return key in self._data
 
-    def get(self, section: str, key: str, name: str = None, new_value=None, save: bool = False, required: bool = False):
+    def get(
+        self,
+        section: str,
+        key: str,
+        name: str = None,
+        new_value: str = None,
+        save: bool = False,
+        required: bool = False,
+    ) -> str | None:
         name = name or key
         try:
             cfg_value = self._data.get(section, key)
@@ -146,3 +157,28 @@ class NestConfig:
                 log.debug(f'Restoring old {section=} {key=} value={old!r}')
                 self.set(section, key, old)
             raise
+
+    @cached_property
+    def time_zone(self) -> ZoneInfo:
+        if value := self.get('general', 'time_zone', 'local time zone', self._overrides.get('time_zone')):
+            return ZoneInfo(value)
+        tz_name = get_local_tz_name()
+        if '/' in tz_name:
+            self.set('general', 'time_zone', tz_name)
+        return ZoneInfo(tz_name)
+
+
+def get_local_tz_name() -> str:
+    now = datetime.now().astimezone()  # local non-IANA DB TZ
+    offset, tz_name = now.tzinfo.utcoffset(now), now.tzinfo.tzname(now)
+    tz_name = ''.join(part[0] for part in tz_name.split()) if ' ' in tz_name else tz_name
+    zones = (ZoneInfo(tz) for tz in available_timezones() if '/' in tz and not tz.startswith(('Etc/', 'US/')))
+    candidates = {tz.key for tz in zones if offset == tz.utcoffset(now) and tz_name == tz.tzname(now)}
+    if not candidates:
+        return tz_name
+    elif len(candidates) == 1:
+        return next(iter(candidates))
+    else:
+        zones = resources.open_text('tzdata', 'zones').read().splitlines()  # most common aliases seem to be first
+        filtered = [tz for tz in zones if tz in candidates]
+        return filtered[0]

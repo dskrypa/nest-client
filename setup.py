@@ -26,10 +26,10 @@ optional_dependencies['ALL'] = sorted(set(chain.from_iterable(optional_dependenc
 
 requirements = [
     'requests_client@ git+git://github.com/dskrypa/requests_client',
-    'tz_aware_dt@ git+git://github.com/dskrypa/tz_aware_dt',
     'requests',
     'colored',
     'pyyaml',
+    'tzdata',
 ]
 
 
