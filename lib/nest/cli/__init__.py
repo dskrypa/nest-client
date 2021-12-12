@@ -51,10 +51,12 @@ def parser():
         schd_add = schd_parser.add_subparser('sub_action', 'add', 'Add entries with the specified schedule')
         schd_add.add_argument('cron', help='Cron-format schedule to use')
         schd_add.add_argument('temp', type=float, help='The temperature to set at the specified time')
+        schd_add.add_argument('--unit', '-u', choices=('f', 'c'), help='Input unit (default: from config)')
 
         schd_rem = schd_parser.add_subparser('sub_action', 'remove', 'Remove entries with the specified schedule')
         schd_rem.add_argument('cron', help='Cron-format schedule to use')
         schd_rem.add_constant('temp', None)
+        schd_rem.add_constant('unit', None)
 
         schd_save = schd_parser.add_subparser('sub_action', 'save', 'Save the current schedule to a file')
         schd_save.add_argument('path', help='The path to a file in which the current schedule should be saved')
@@ -129,11 +131,11 @@ def manage_schedule(nest: 'NestWebClient', action: str, args):
     from nest.entities import Schedule
 
     if action == 'load':
-        Schedule.from_file(nest, args.path).push(args.force, args.dry_run)
+        Schedule.from_file(nest, args.path).push(force=args.force, dry_run=args.dry_run)
     else:
         schedule = Schedule.find(nest)
         if action in {'add', 'remove'}:
-            schedule.update(args.cron, action, args.temp, args.dry_run)
+            schedule.update(args.cron, action, args.temp, args.unit, dry_run=args.dry_run)
         elif action == 'save':
             schedule.save(args.path, args.overwrite, args.dry_run)
         elif action == 'show':

@@ -90,12 +90,23 @@ class Schedule(NestObject, type='schedule', parent_type='device'):
             with path.open('w', encoding='utf-8', newline='\n') as f:
                 json.dump(self.weekly_schedule.to_dict(), f, indent=4, sort_keys=False)
 
-    def update(self, cron_str: str, action: str, temp: float, dry_run: bool = False):
-        changes_made = self.weekly_schedule.update(cron_str, action, temp)
+    def update(
+        self,
+        cron_str: str,
+        action: str,
+        temp: float,
+        unit: str = None,
+        mode: str = None,
+        *,
+        force: bool = False,
+        dry_run: bool = False,
+    ):
+        changes_made = self.weekly_schedule.update(cron_str, action, temp, unit, mode)
         if changes_made:
-            self.push(dry_run)
+            # TODO: Show a diff instead of just the new schedule
+            self.push(unit=unit, force=force, dry_run=dry_run)
 
-    def push(self, force: bool = False, dry_run: bool = False):
+    def push(self, *, unit: str = None, force: bool = False, dry_run: bool = False):
         self.parent.shared.maybe_update_mode(self.mode, dry_run)
         payload = self.weekly_schedule.to_update_dict()
         if payload == self.value:
@@ -104,7 +115,8 @@ class Schedule(NestObject, type='schedule', parent_type='device'):
             else:
                 log.info(f'No changes to push for {self}')
                 return
-        log.info(f'New schedule to be pushed:\n{self.weekly_schedule.format()}')
+
+        log.info(f'New schedule to be pushed:\n{self.weekly_schedule.format(unit=unit)}')
         log.debug('Full payload to be pushed: {}'.format(json.dumps(payload, indent=4, sort_keys=True)))
         prefix = '[DRY RUN] Would push' if dry_run else 'Pushing'
         schedule_mode = self.mode.lower()
@@ -127,37 +139,7 @@ class WeeklySchedule:
         self.meta = meta
         self.days = {int(n): DaySchedule(n, schedule.values(), self) for n, schedule in sorted(day_schedules.items())}
 
-    @cached_property
-    def unit(self) -> str:
-        return self.meta.unit[0].lower()
-
-    def __getitem__(self, day: Day) -> 'DaySchedule':
-        day = _normalize_day(day)
-        try:
-            return self.days[day]
-        except KeyError:
-            if 0 <= day <= 6:
-                self.days[day] = day_schedule = DaySchedule(day, (), self)
-                return day_schedule
-            raise
-
-    def __iter__(self) -> Iterator['DaySchedule']:
-        for day in range(7):
-            yield self[day]
-
-    def as_day_time_temp_map(self, convert: bool = None) -> dict[str, dict[str, float] | None]:
-        """Mapping of {day name: {'HH:MM': temperature}}"""
-        return {
-            calendar.day_name[day_num]: ds.as_time_temp_map(convert) if (ds := self.days.get(day_num)) else None
-            for day_num in (6, 0, 1, 2, 3, 4, 5)  # Su M Tu W Th F Sa
-        }
-
-    def to_dict(self) -> dict[str, dict[str, Any]]:
-        return {'meta': self.meta.as_dict(), 'schedule': self.as_day_time_temp_map()}
-
-    def to_update_dict(self) -> dict[str, str | int | dict[str, ScheduleEntryDict]]:
-        days = {str(i): day_schedule.to_update_dict() for i, day_schedule in enumerate(self)}
-        return {'ver': self.meta.ver, 'schedule_mode': self.meta.mode, 'name': self.meta.name, 'days': days}
+    # region Alternate Initializers
 
     @classmethod
     def from_dict(cls, data: dict[str, dict[str, Any]]) -> 'WeeklySchedule':
@@ -179,9 +161,51 @@ class WeeklySchedule:
             data = json.load(f)
         return cls.from_dict(data)
 
+    # endregion
+
+    # region Internals
+
+    @cached_property
+    def unit(self) -> str:
+        return self.meta.unit[0].lower()
+
+    def __getitem__(self, day: Day) -> 'DaySchedule':
+        day = _normalize_day(day)
+        try:
+            return self.days[day]
+        except KeyError:
+            if 0 <= day <= 6:
+                self.days[day] = day_schedule = DaySchedule(day, (), self)
+                return day_schedule
+            raise
+
+    def __iter__(self) -> Iterator['DaySchedule']:
+        for day in range(7):
+            yield self[day]
+
+    # endregion
+
+    # region Format Conversion Methods
+
+    def as_day_time_temp_map(self, convert: bool = None) -> dict[str, dict[str, float] | None]:
+        """Mapping of {day name: {'HH:MM': temperature}}"""
+        return {
+            calendar.day_name[day_num]: ds.as_time_temp_map(convert) if (ds := self.days.get(day_num)) else None
+            for day_num in (6, 0, 1, 2, 3, 4, 5)  # Su M Tu W Th F Sa
+        }
+
+    def to_dict(self) -> dict[str, dict[str, Any]]:
+        return {'meta': self.meta.as_dict(), 'schedule': self.as_day_time_temp_map()}
+
+    def to_update_dict(self) -> dict[str, str | int | dict[str, ScheduleEntryDict]]:
+        days = {str(i): day_schedule.to_update_dict() for i, day_schedule in enumerate(self)}
+        return {'ver': self.meta.ver, 'schedule_mode': self.meta.mode, 'name': self.meta.name, 'days': days}
+
+    # endregion
+
     # region Update Methods
 
-    def update(self, cron_str: str, action: str, temp: float) -> int:
+    def update(self, cron_str: str, action: str, temp: float, unit: str = None, mode: str = None) -> int:
         cron = NestCronSchedule.from_cron(cron_str)  # Note: cron DOW uses 0=Sunday
         changes_made = 0
         if action == 'remove':
@@ -194,7 +218,7 @@ class WeeklySchedule:
                     changes_made += 1
         elif action == 'add':
             for dow, tod_seconds in cron:
-                self.insert(_previous_day(dow), tod_seconds, temp)
+                self.insert(_previous_day(dow), tod_seconds, temp, unit=unit, mode=mode)
                 changes_made += 1
         else:
             raise ValueError(f'Unexpected {action=!r}')
@@ -311,6 +335,8 @@ class DaySchedule:
         ]
         return cls(day, schedule, parent)
 
+    # region Format Conversion Methods
+
     def as_time_temp_map(self, convert: bool = None) -> dict[str, float]:
         if convert or (convert is None and self.parent.unit == 'f'):
             return {secs_to_wall(d_time): round(c2f(temp), 2) for d_time, temp, mode in self}
@@ -323,14 +349,25 @@ class DaySchedule:
     def to_update_dict(self) -> dict[str, ScheduleEntryDict]:
         return {str(i): entry.as_dict() for i, entry in enumerate(self.schedule)}
 
-    def _time_pos(self, time_of_day: int) -> int:
-        return bisect_left(self.schedule, time_of_day, key=lambda e: e.time)
+    # endregion
 
-    def insert(self, time_of_day: TOD, temp: float, user_id: str, user_num: int = 1, unit: str = 'c', mode: str = None):
+    def insert(
+        self,
+        time_of_day: TOD,
+        temp: float,
+        user_id: str = None,
+        user_num: int = None,
+        unit: str = None,
+        mode: str = None,
+    ):
         time_of_day = tod_secs(time_of_day)
-        if unit[0].lower() == 'f':
+        if (unit or self.parent.unit)[0].lower() == 'f':
             temp = round(f2c(temp), 2)
-        entry = ScheduleEntry(time_of_day, temp, mode or self.parent.meta.unit, user_id, user_num)
+
+        meta = self.parent.meta
+        entry = ScheduleEntry(
+            time_of_day, temp, mode or meta.mode, user_id or meta.user_id, user_num or meta.user_num, updated=True
+        )
         pos = self._time_pos(time_of_day)
         if pos and self.schedule[pos].time == time_of_day:  # noqa
             log.debug(f'Replacing entry for {tod_repr(time_of_day)} with {entry=} in {self}')
@@ -347,6 +384,9 @@ class DaySchedule:
             self.schedule.pop(pos)
         else:
             raise TimeNotFound(f'Invalid {tod_repr(time_of_day)} - not found in {self}')
+
+    def _time_pos(self, time_of_day: int) -> int:
+        return bisect_left(self.schedule, time_of_day, key=lambda e: e.time)
 
 
 @dataclass
@@ -373,9 +413,11 @@ class ScheduleEntry:
     touched_tzo: int = field(compare=False, default=-14400)
     entry_type: str = field(compare=False, default='setpoint')
     touched_at: int = field(compare=False, default_factory=lambda: int(time.time()))
+    updated: InitVar[bool] = field(compare=False, default=False)  # InitVar to hide from fields for asdict
 
-    def __post_init__(self):
+    def __post_init__(self, updated: bool = False):
         self.time = tod_secs(self.time)
+        self.updated = updated  # noqa  # Planned use case: to show as a different color in table for diff
 
     @classmethod
     def from_dict(cls, entry: dict[str, str | int | float]) -> 'ScheduleEntry':
@@ -390,7 +432,7 @@ class ScheduleEntry:
         return self.entry_type == 'continuation'
 
     def make_continuation(self) -> 'ScheduleEntry':
-        return ScheduleEntry(0, self.temp, self.type, None, 1, entry_type='continuation')
+        return ScheduleEntry(0, self.temp, self.type, None, 1, entry_type='continuation', updated=True)
 
 
 def secs_to_wall(seconds: int) -> str:
