@@ -12,8 +12,8 @@ from .argparser import ArgParser
 from .wrapper import wrap_main
 
 if TYPE_CHECKING:
-    from nest.client import NestWebClient
-    from nest.entities import Schedule
+    from nest_client.client import NestWebClient
+    from nest_client.entities import Schedule
 
 log = logging.getLogger(__name__)
 SHOW_ITEMS = ('energy', 'weather', 'buckets', 'bucket_names', 'schedule')
@@ -96,7 +96,7 @@ def main():
     log_fmt = '%(asctime)s %(levelname)s %(name)s %(lineno)d %(message)s' if args.verbose else '%(message)s'
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format=log_fmt)
 
-    from nest.client import NestWebClient
+    from nest_client.client import NestWebClient
 
     nest = NestWebClient(args.config, args.reauth)
 
@@ -128,7 +128,7 @@ def main():
 
 
 def manage_schedule(nest: 'NestWebClient', action: str, args):
-    from nest.entities import Schedule
+    from nest_client.entities import Schedule
 
     if action == 'load':
         Schedule.from_file(nest, args.path).push(force=args.force, dry_run=args.dry_run)
@@ -145,7 +145,7 @@ def manage_schedule(nest: 'NestWebClient', action: str, args):
 
 
 def control_thermostat(nest: 'NestWebClient', action: str, args):
-    from nest.entities import ThermostatDevice
+    from nest_client.entities import ThermostatDevice
 
     thermostat = ThermostatDevice.find(nest)
     if action == 'fan':
@@ -170,7 +170,7 @@ def control_thermostat(nest: 'NestWebClient', action: str, args):
 
 
 def _convert_temp_values(status: dict[str, dict[str, Any]]):
-    from nest.utils import celsius_to_fahrenheit as c2f
+    from nest_client.utils import celsius_to_fahrenheit as c2f
 
     temp_key_map = {
         'shared': ('target_temperature_high', 'target_temperature_low', 'target_temperature', 'current_temperature'),
@@ -182,7 +182,7 @@ def _convert_temp_values(status: dict[str, dict[str, Any]]):
 
 
 def show_status(nest: 'NestWebClient', details: bool, out_fmt: str):
-    from nest.entities import ThermostatDevice
+    from nest_client.entities import ThermostatDevice
 
     device = ThermostatDevice.find(nest)
     if details:

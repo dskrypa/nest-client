@@ -52,5 +52,5 @@ setup(
     python_requires='~=3.9',
     install_requires=requirements,
     extras_require=optional_dependencies,
-    entry_points={'console_scripts': ['nest=nest.cli:main']},
+    entry_points={'console_scripts': ['nest=nest_client.cli:main']},
 )
