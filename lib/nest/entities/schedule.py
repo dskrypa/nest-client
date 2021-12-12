@@ -46,11 +46,9 @@ class Schedule(NestObject, type='schedule', parent_type='device'):
 
     @classmethod
     def from_weekly(cls, client: 'NestWebClient', weekly_schedule: 'WeeklySchedule') -> 'Schedule':
-        days_dict = {str(num): day_schedule.as_dict() for num, day_schedule in weekly_schedule.days.items()}
         meta = weekly_schedule.meta
-        value = {'days': days_dict, 'name': meta.name, 'schedule_mode': meta.mode.upper(), 'ver': meta.ver}
         serial = meta.serial or client.config.serial or client.get_device().serial  # exc if many/no devices are found
-        return cls(f'schedule.{serial}', None, None, value, client)
+        return cls(f'schedule.{serial}', None, None, weekly_schedule.to_update_dict(), client)
 
     @classmethod
     def from_file(cls, client: 'NestWebClient', path: Union[str, Path]) -> 'Schedule':
@@ -97,9 +95,15 @@ class Schedule(NestObject, type='schedule', parent_type='device'):
         if changes_made:
             self.push(dry_run)
 
-    def push(self, dry_run: bool = False):
+    def push(self, force: bool = False, dry_run: bool = False):
         self.parent.shared.maybe_update_mode(self.mode, dry_run)
         payload = self.weekly_schedule.to_update_dict()
+        if payload == self.value:
+            if force:
+                log.info(f'Pushing changes for {self} even though the payload matches the current schedule')
+            else:
+                log.info(f'No changes to push for {self}')
+                return
         log.info(f'New schedule to be pushed:\n{self.weekly_schedule.format()}')
         log.debug('Full payload to be pushed: {}'.format(json.dumps(payload, indent=4, sort_keys=True)))
         prefix = '[DRY RUN] Would push' if dry_run else 'Pushing'
@@ -361,7 +365,7 @@ class ScheduleMeta:
 
 @dataclass(order=True)
 class ScheduleEntry:
-    time: InitVar[int] = field(compare=True)
+    time: int = field(compare=True)
     temp: float = field(compare=False)
     type: str = field(compare=False)
     touched_user_id: str | None = field(compare=False)
@@ -370,13 +374,13 @@ class ScheduleEntry:
     entry_type: str = field(compare=False, default='setpoint')
     touched_at: int = field(compare=False, default_factory=lambda: int(time.time()))
 
-    def __post_init__(self, time: TOD):  # noqa
-        self.time = tod_secs(time)  # noqa
+    def __post_init__(self):
+        self.time = tod_secs(self.time)
 
     @classmethod
     def from_dict(cls, entry: dict[str, str | int | float]) -> 'ScheduleEntry':
         entry.setdefault('type', entry.pop('mode', None))
-        return cls(entry['time'], **{k: v for k in (f.name for f in fields(cls)) if (v := entry.get(k)) is not None})
+        return cls(**{k: v for k in (f.name for f in fields(cls)) if (v := entry.get(k)) is not None})
 
     def as_dict(self) -> dict[str, str | int | float]:
         return asdict(self)

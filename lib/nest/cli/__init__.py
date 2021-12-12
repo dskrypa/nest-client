@@ -62,6 +62,7 @@ def parser():
 
         schd_load = schd_parser.add_subparser('sub_action', 'load', 'Load a schedule from a file')
         schd_load.add_argument('path', help='The path to a file containing the schedule that should be loaded')
+        schd_load.add_argument('--force', '-F', action='store_true', help='Force the schedule to be pushed, even if it matches the current schedule')
 
         schd_show = schd_parser.add_subparser('sub_action', 'show', 'Show the current schedule')
         schd_show.add_argument('--format', '-f', choices=Printer.formats, help='Output format')
@@ -128,7 +129,7 @@ def manage_schedule(nest: 'NestWebClient', action: str, args):
     from nest.entities import Schedule
 
     if action == 'load':
-        Schedule.from_file(nest, args.path).push(args.dry_run)
+        Schedule.from_file(nest, args.path).push(args.force, args.dry_run)
     else:
         schedule = Schedule.find(nest)
         if action in {'add', 'remove'}:
