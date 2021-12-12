@@ -46,9 +46,10 @@ setup(
     package_dir={'': 'lib'},
     classifiers=[
         'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3.9',
         'Programming Language :: Python :: 3.10',
     ],
-    python_requires='~=3.10',
+    python_requires='~=3.9',
     install_requires=requirements,
     extras_require=optional_dependencies,
     entry_points={'console_scripts': ['nest=nest.cli:main']},
