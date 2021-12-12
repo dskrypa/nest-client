@@ -10,7 +10,7 @@ with project_root.joinpath('readme.rst').open('r', encoding='utf-8') as f:
     long_description = f.read()
 
 about = {}
-with project_root.joinpath('lib', 'nest', '__version__.py').open('r', encoding='utf-8') as f:
+with project_root.joinpath('lib', 'nest_client', '__version__.py').open('r', encoding='utf-8') as f:
     exec(f.read(), about)
 
 
