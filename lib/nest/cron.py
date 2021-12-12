@@ -240,13 +240,13 @@ class CronPart:
 
 
 class CronSchedule:
-    second = CronPart(60)
-    minute = CronPart(60)
-    hour = CronPart(24)
-    day = CronPart(31, min=1, special='L')
-    month = CronPart(12, min=1)
-    dow = CronPart(7)
-    week = CronPart(6, min=1, special='L')
+    second = CronPart(60)                   # Second
+    minute = CronPart(60)                   # Minute
+    hour = CronPart(24)                     # Hour
+    day = CronPart(31, min=1, special='L')  # Day of month
+    month = CronPart(12, min=1)             # Month
+    dow = CronPart(7)                       # Day of week: 0 = Sunday, 1 = Monday, ... 6 = Saturday, 7 = Sunday
+    week = CronPart(6, min=1, special='L')  # Week of month
 
     def __init__(self, start: datetime = None):
         self._start = start

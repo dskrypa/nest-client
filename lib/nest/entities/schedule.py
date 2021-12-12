@@ -1,5 +1,5 @@
 """
-Classes that represent Nest Structures, Users, Devices/Thermostats, etc.
+Classes that represent a Nest Schedule, and the week, days, and entries in it.
 
 :author: Doug Skrypa
 """
@@ -10,7 +10,6 @@ import logging
 import time
 from bisect import bisect_left
 from dataclasses import dataclass, field, fields, asdict, InitVar
-from datetime import datetime
 from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Union, Iterator, Iterable
@@ -61,10 +60,6 @@ class Schedule(NestObject, type='schedule', parent_type='device'):
 
     # region Properties
 
-    # @cached_property
-    # def days(self) -> dict[int, 'DaySchedule']:
-    #     return {int(day): DaySchedule(day, schedule.values()) for day, schedule in sorted(self._days.items())}
-
     @cached_property
     def where(self) -> str:
         return NEST_WHERE_MAP.get(self.where_id, self.where_id)
@@ -97,29 +92,28 @@ class Schedule(NestObject, type='schedule', parent_type='device'):
             with path.open('w', encoding='utf-8', newline='\n') as f:
                 json.dump(self.weekly_schedule.to_dict(), f, indent=4, sort_keys=False)
 
-    # region Output / Formatting Methods
+    def update(self, cron_str: str, action: str, temp: float, dry_run: bool = False):
+        changes_made = self.weekly_schedule.update(cron_str, action, temp)
+        if changes_made:
+            self.push(dry_run)
 
-    def format(self, output_format: str = 'table', mode: str = 'pretty'):
-        if output_format == 'table':
-            if mode != 'pretty':
-                raise ValueError(f'Invalid format {mode=} with {output_format=} for {self}')
+    def push(self, dry_run: bool = False):
+        self.parent.shared.maybe_update_mode(self.mode, dry_run)
+        payload = self.weekly_schedule.to_update_dict()
+        log.info(f'New schedule to be pushed:\n{self.weekly_schedule.format()}')
+        log.debug('Full payload to be pushed: {}'.format(json.dumps(payload, indent=4, sort_keys=True)))
+        prefix = '[DRY RUN] Would push' if dry_run else 'Pushing'
+        schedule_mode = self.mode.lower()
+        log.info(f'{prefix} changes to {schedule_mode} schedule with name={self.name!r}')
+        if not dry_run:
+            resp = self._set_full(payload, 'OVERWRITE')
+            log.debug('Push response: {}'.format(json.dumps(resp.json(), indent=4, sort_keys=True)))
 
-            schedule = self.weekly_schedule.as_day_time_temp_map()
-            rows = [{'Day': day, **time_temp_map} for day, time_temp_map in schedule.items() if time_temp_map]
-            times = {t for time_temp_map in schedule.values() for t in time_temp_map if time_temp_map}
-            columns = [SimpleColumn('Day'), *(SimpleColumn(_time, ftype='.1f') for _time in sorted(times))]
-            table = Table(*columns, update_width=True)
-            return table.format_rows(rows, True)
+    def print(self, output_format: str = 'table', full: bool = False, raw: bool = False):
+        if raw:
+            Printer(output_format).pprint(self.to_dict(), sort_keys=False, indent_nested_lists=True)
         else:
-            schedule = self.weekly_schedule.as_day_time_temp_map() if mode == 'pretty' else self.to_dict()
-            return Printer(output_format).pformat(schedule, sort_keys=False)
-
-    def print(self, output_format: str = 'table', mode: str = 'pretty'):
-        if output_format == 'table':
-            print(f'Schedule name={self.name!r} mode={self.mode!r} ver={self.version!r}\n')
-        print(self.format(output_format, mode))
-
-    # endregion
+            self.weekly_schedule.print(output_format, full)
 
 
 class WeeklySchedule:
@@ -149,14 +143,17 @@ class WeeklySchedule:
 
     def as_day_time_temp_map(self) -> dict[str, dict[str, float] | None]:
         """Mapping of {day name: {'HH:MM': temperature}}"""
-        convert = self.meta.unit == 'f'
         return {
-            calendar.day_name[day_num]: sched.as_time_temp_map(convert) if (sched := self.days.get(day_num)) else None
+            calendar.day_name[day_num]: schedule.as_time_temp_map() if (schedule := self.days.get(day_num)) else None
             for day_num in (6, 0, 1, 2, 3, 4, 5)  # Su M Tu W Th F Sa
         }
 
     def to_dict(self) -> dict[str, dict[str, Any]]:
         return {'meta': self.meta.as_dict(), 'schedule': self.as_day_time_temp_map()}
+
+    def to_update_dict(self) -> dict[str, str | int | dict[str, ScheduleEntryDict]]:
+        days = {str(i): day_schedule.to_update_dict() for i, day_schedule in enumerate(self)}
+        return {'ver': self.meta.ver, 'schedule_mode': self.meta.mode, 'name': self.meta.name, 'days': days}
 
     @classmethod
     def from_dict(cls, data: dict[str, dict[str, Any]]) -> 'WeeklySchedule':
@@ -177,6 +174,33 @@ class WeeklySchedule:
         with path.open('r', encoding='utf-8') as f:
             data = json.load(f)
         return cls.from_dict(data)
+
+    # region Update Methods
+
+    def update(self, cron_str: str, action: str, temp: float) -> int:
+        cron = NestCronSchedule.from_cron(cron_str)  # Note: cron DOW uses 0=Sunday
+        changes_made = 0
+        if action == 'remove':
+            for dow, tod_seconds in cron:
+                try:
+                    self.remove(_previous_day(dow), tod_seconds)
+                except TimeNotFound as e:
+                    log.debug(e)
+                else:
+                    changes_made += 1
+        elif action == 'add':
+            for dow, tod_seconds in cron:
+                self.insert(_previous_day(dow), tod_seconds, temp)
+                changes_made += 1
+        else:
+            raise ValueError(f'Unexpected {action=!r}')
+
+        if changes_made:
+            past, tf = ('Added', 'to') if action == 'add' else ('Removed', 'from')
+            log.info(f'{past} {changes_made} entries {tf} {self.meta.mode} schedule with name={self.meta.name!r}')
+        else:
+            log.info(f'No changes made')
+        return changes_made
 
     def insert(self, day: Day, *args, **kwargs):
         self[day].insert(*args, **kwargs)
@@ -209,8 +233,34 @@ class WeeklySchedule:
                         log.debug(f'No continuation entry is needed for {today} due to explicit temp at time=0')
                 yesterday = today
 
+    # endregion
+
+    # region Output / Formatting Methods
+
+    def format(self, output_format: str = 'table', full: bool = False):
+        if output_format == 'table':
+            schedule = self.as_day_time_temp_map()
+            rows = [{'Day': day, **time_temp_map} for day, time_temp_map in schedule.items() if time_temp_map]
+            times = {t for time_temp_map in schedule.values() for t in time_temp_map if time_temp_map}
+            columns = [SimpleColumn('Day'), *(SimpleColumn(_time, ftype='.1f') for _time in sorted(times))]
+            table = Table(*columns, update_width=True)
+            return table.format_rows(rows, True)
+        else:
+            schedule = self.to_update_dict() if full else self.as_day_time_temp_map()
+            return Printer(output_format).pformat(schedule, sort_keys=False, indent_nested_lists=True)
+
+    def print(self, output_format: str = 'table', full: bool = False):
+        if output_format == 'table':
+            meta = self.meta
+            print(f'Schedule name={meta.name!r} mode={meta.mode!r} ver={meta.ver!r} unit={self.unit}\n')
+        print(self.format(output_format, full))
+
+    # endregion
+
 
 class DaySchedule:
+    schedule: list['ScheduleEntry']
+
     def __init__(self, day: Day | int, schedule: Iterable[SchedEntry], parent: WeeklySchedule):
         if not 0 <= (day := _normalize_day(day)) <= 6:
             raise ValueError(f'Invalid {day=} - must be between 0=Monday and 6=Sunday, inclusive')
@@ -218,9 +268,9 @@ class DaySchedule:
         self.day = calendar.day_name[self.num]
         self.schedule = sorted(ScheduleEntry.from_dict(e) if isinstance(e, dict) else e for e in schedule)  # noqa
         self.parent = parent
-        if parent.unit == 'f':
-            for entry in self.schedule:
-                entry.temp = round(f2c(entry.temp), 2)
+        # if parent.unit == 'f':
+        #     for entry in self.schedule:
+        #         entry.temp = round(f2c(entry.temp), 2)
 
     # region Dunder Methods
 
@@ -241,7 +291,7 @@ class DaySchedule:
 
     def __iter__(self) -> Iterator[tuple[int, float, str]]:
         for entry in self.schedule:
-            yield entry.time, entry.temp, entry.type
+            yield entry.time, entry.temp, entry.type  # noqa
 
     def __bool__(self) -> bool:
         return bool(self.schedule)
@@ -266,6 +316,9 @@ class DaySchedule:
     def as_dict(self) -> dict[str, 'ScheduleEntry']:
         return {str(i): entry for i, entry in enumerate(self.schedule)}
 
+    def to_update_dict(self) -> dict[str, ScheduleEntryDict]:
+        return {str(i): entry.as_dict() for i, entry in enumerate(self.schedule)}
+
     def _time_pos(self, time_of_day: int) -> int:
         return bisect_left(self.schedule, time_of_day, key=lambda e: e.time)
 
@@ -275,18 +328,21 @@ class DaySchedule:
             temp = round(f2c(temp), 2)
         entry = ScheduleEntry(time_of_day, temp, mode or self.parent.meta.unit, user_id, user_num)
         pos = self._time_pos(time_of_day)
-        if pos and self.schedule[pos].time == time_of_day:
+        if pos and self.schedule[pos].time == time_of_day:  # noqa
+            log.debug(f'Replacing entry for {tod_repr(time_of_day)} with {entry=} in {self}')
             self.schedule[pos] = entry
         else:
+            log.debug(f'Inserting {entry=} for {tod_repr(time_of_day)} in {self}')
             self.schedule.insert(pos + 1, entry)
 
     def remove(self, time_of_day: TOD):
         time_of_day = tod_secs(time_of_day)
         pos = self._time_pos(time_of_day)
-        if pos and self.schedule[pos].time == time_of_day:
+        if pos and self.schedule[pos].time == time_of_day:  # noqa
+            log.debug(f'Removing {tod_repr(time_of_day)} from {self}')
             self.schedule.pop(pos)
         else:
-            raise TimeNotFound(f'Invalid {time_of_day=} ({secs_to_wall(time_of_day)}) - not found in {self}')
+            raise TimeNotFound(f'Invalid {tod_repr(time_of_day)} - not found in {self}')
 
 
 @dataclass
@@ -320,7 +376,7 @@ class ScheduleEntry:
     @classmethod
     def from_dict(cls, entry: dict[str, str | int | float]) -> 'ScheduleEntry':
         entry.setdefault('type', entry.pop('mode', None))
-        return cls(**{k: v for k in _fields(cls) if (v := entry.get(k)) is not None})
+        return cls(entry['time'], **{k: v for k in (f.name for f in fields(cls)) if (v := entry.get(k)) is not None})
 
     def as_dict(self) -> dict[str, str | int | float]:
         return asdict(self)
@@ -333,19 +389,13 @@ class ScheduleEntry:
         return ScheduleEntry(0, self.temp, self.type, None, 1, entry_type='continuation')
 
 
-def _fields(obj):
-    for field_obj in fields(obj):
-        yield field_obj.name
-
-
 def secs_to_wall(seconds: int) -> str:
     hour, minute = divmod(seconds // 60, 60)
     return f'{hour:02d}:{minute:02d}'
 
 
-def wall_to_secs(wall: str) -> int:
-    hour, minute = map(int, wall.split(':'))
-    return (hour * 60 + minute) * 60
+def tod_repr(time_of_day: int) -> str:
+    return f'{time_of_day=} ({secs_to_wall(time_of_day)})'
 
 
 def tod_secs(time_of_day: TOD) -> int:
@@ -353,8 +403,7 @@ def tod_secs(time_of_day: TOD) -> int:
         hour, minute = map(int, time_of_day.split(':'))
         time_of_day = (hour * 60 + minute) * 60
     if not 0 <= time_of_day < 86400:
-        tod_str = secs_to_wall(time_of_day)
-        raise ValueError(f'Invalid {time_of_day=} ({tod_str}) - must be between 0 (0:00) and 86400 (24:00)')
+        raise ValueError(f'Invalid {tod_repr(time_of_day)} - must be between 0 (0:00) and 86400 (24:00)')
     return time_of_day
 
 
@@ -372,13 +421,3 @@ def _normalize_day(day: str | int) -> int:
 
 def _previous_day(day: int) -> int:
     return 6 if day == 0 else day - 1
-
-
-def _next_day(day: int) -> int:
-    return 0 if day == 6 else day + 1
-
-
-def _continuation_day(day: int) -> int:
-    days = list(range(7))
-    candidates = days[day+1:] + days[:day]
-    return candidates[0]

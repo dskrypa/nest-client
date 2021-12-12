@@ -47,26 +47,27 @@ def parser():
     show_parser.add_argument('--format', '-f', choices=Printer.formats, help='Output format')
     show_parser.add_argument('--raw', '-r', action='store_true', help='Show the full raw response instead of the processed response (only applies to item=buckets)')
 
-    # with parser.add_subparser('action', 'schedule', 'Update the schedule') as schd_parser:
-    #     schd_add = schd_parser.add_subparser('sub_action', 'add', 'Add entries with the specified schedule')
-    #     schd_add.add_argument('cron', help='Cron-format schedule to use')
-    #     schd_add.add_argument('temp', type=float, help='The temperature to set at the specified time')
-    #
-    #     schd_rem = schd_parser.add_subparser('sub_action', 'remove', 'Remove entries with the specified schedule')
-    #     schd_rem.add_argument('cron', help='Cron-format schedule to use')
-    #     schd_rem.add_constant('temp', None)
-    #
-    #     schd_save = schd_parser.add_subparser('sub_action', 'save', 'Save the current schedule to a file')
-    #     schd_save.add_argument('path', help='The path to a file in which the current schedule should be saved')
-    #     schd_save.add_argument('--overwrite', '-W', action='store_true', help='Overwrite the file if it already exists')
-    #
-    #     schd_load = schd_parser.add_subparser('sub_action', 'load', 'Load a schedule from a file')
-    #     schd_load.add_argument('path', help='The path to a file containing the schedule that should be loaded')
-    #
-    #     schd_show = schd_parser.add_subparser('sub_action', 'show', 'Show the current schedule')
-    #     schd_show.add_argument('--format', '-f', choices=Printer.formats, help='Output format')
-    #
-    #     schd_parser.add_common_arg('--dry_run', '-D', action='store_true', help='Print actions that would be taken instead of taking them')
+    with parser.add_subparser('action', 'schedule', 'Update the schedule') as schd_parser:
+        schd_add = schd_parser.add_subparser('sub_action', 'add', 'Add entries with the specified schedule')
+        schd_add.add_argument('cron', help='Cron-format schedule to use')
+        schd_add.add_argument('temp', type=float, help='The temperature to set at the specified time')
+
+        schd_rem = schd_parser.add_subparser('sub_action', 'remove', 'Remove entries with the specified schedule')
+        schd_rem.add_argument('cron', help='Cron-format schedule to use')
+        schd_rem.add_constant('temp', None)
+
+        schd_save = schd_parser.add_subparser('sub_action', 'save', 'Save the current schedule to a file')
+        schd_save.add_argument('path', help='The path to a file in which the current schedule should be saved')
+        schd_save.add_argument('--overwrite', '-W', action='store_true', help='Overwrite the file if it already exists')
+
+        schd_load = schd_parser.add_subparser('sub_action', 'load', 'Load a schedule from a file')
+        schd_load.add_argument('path', help='The path to a file containing the schedule that should be loaded')
+
+        schd_show = schd_parser.add_subparser('sub_action', 'show', 'Show the current schedule')
+        schd_show.add_argument('--format', '-f', choices=Printer.formats, help='Output format')
+        schd_show.add_argument('--raw', '-r', action='count', default=0, help='Show the schedule in the Nest format instead of readable')
+
+        schd_parser.add_common_arg('--dry_run', '-D', action='store_true', help='Print actions that would be taken instead of taking them')
 
     full_status_parser = parser.add_subparser('action', 'full_status', 'Show/save the full device+shared status')
     full_status_parser.add_argument('--path', '-p', help='Location to store status info')
@@ -101,19 +102,8 @@ def main():
         control_thermostat(nest, action, args)
     elif action == 'show':
         show_item(nest, args.item, args.format, args.buckets, args.raw)
-    # elif action == 'schedule':
-    #     from nest.schedule import NestSchedule
-    #     if args.sub_action in ('add', 'remove'):
-    #         schedule = nest.get_schedule()
-    #         schedule.update(args.cron, args.sub_action, args.temp, args.dry_run)
-    #     elif args.sub_action == 'save':
-    #         schedule = nest.get_schedule()
-    #         schedule.save(args.path, args.overwrite, args.dry_run)
-    #     elif args.sub_action == 'load':
-    #         schedule = NestSchedule.from_file(nest, args.path)
-    #         schedule.push(args.dry_run)
-    #     elif args.sub_action == 'show':
-    #         nest.get_schedule().print(args.format or 'table')
+    elif action == 'schedule':
+        manage_schedule(nest, args.sub_action, args)
     elif action == 'full_status':
         show_full_status(nest, args.path, args.diff)
     elif action == 'config':
@@ -131,6 +121,23 @@ def main():
             raise ValueError(f'Unexpected config sub-action={args.sub_action!r}')
     else:
         raise ValueError(f'Unexpected {action=!r}')
+
+
+def manage_schedule(nest: 'NestWebClient', action: str, args):
+    from nest.entities import Schedule
+
+    if action == 'load':
+        Schedule.from_file(nest, args.path).push(args.dry_run)
+    else:
+        schedule = Schedule.find(nest)
+        if action in {'add', 'remove'}:
+            schedule.update(args.cron, action, args.temp, args.dry_run)
+        elif action == 'save':
+            schedule.save(args.path, args.overwrite, args.dry_run)
+        elif action == 'show':
+            schedule.print(args.format or ('yaml' if args.raw else 'table'), args.raw, args.raw > 1)
+        else:
+            raise ValueError(f'Unexpected sub_{action=}')
 
 
 def control_thermostat(nest: 'NestWebClient', action: str, args):
@@ -210,7 +217,7 @@ def show_status(nest: 'NestWebClient', details: bool, out_fmt: str):
 def show_item(nest: 'NestWebClient', item: str, out_fmt: str = None, buckets=None, raw: bool = False):
     if item == 'schedule':
         schedule = nest.get_object('schedule')  # type: Schedule
-        schedule.print(out_fmt or ('raw' if raw else 'table'), 'raw' if raw else 'pretty')
+        schedule.weekly_schedule.print(out_fmt or ('raw' if raw else 'table'), 'raw' if raw else 'pretty')
     else:
         if item == 'energy':
             data = nest.get_object('energy_latest').value

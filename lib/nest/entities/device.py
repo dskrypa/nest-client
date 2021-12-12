@@ -178,6 +178,12 @@ class Shared(NestObject, type='shared', parent_type='device'):
             raise ValueError(f'Invalid {mode=}')
         return self._set_key('target_temperature_type', mode)
 
+    def maybe_update_mode(self, mode: str, dry_run: bool = False):
+        if (current := self.mode.lower()) != (proposed := mode.lower()):
+            log.info(f'{"[DRY RUN] Would update" if dry_run else "Updating"} mode from {current} to {proposed}')
+            if not dry_run:
+                self.set_mode(proposed)
+
 
 class EnergyUsage(NestObject, type='energy_latest', parent_type='device'):
     parent: 'NestDevice'
