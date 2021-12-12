@@ -9,7 +9,7 @@ import json
 import logging
 import time
 from bisect import bisect_left
-from dataclasses import dataclass, field, fields, asdict
+from dataclasses import dataclass, field, fields, asdict, InitVar
 from datetime import datetime
 from functools import cached_property
 from pathlib import Path
@@ -30,6 +30,9 @@ __all__ = ['Schedule', 'DaySchedule', 'ScheduleEntry']
 log = logging.getLogger(__name__)
 
 ScheduleEntryDict = dict[str, str | int | float]
+SchedEntry = Union['ScheduleEntry', ScheduleEntryDict]
+Day = str | int  # Day name | 0 (Monday) - 6 (Sunday)
+TOD = str | int  # HH:MM | 0 (midnight) - 86340 (23:59)
 
 
 class Schedule(NestObject, type='schedule', parent_type='device'):
@@ -126,10 +129,23 @@ class WeeklySchedule:
         self.meta = meta
         self.days = {int(n): DaySchedule(n, schedule.values(), self) for n, schedule in sorted(day_schedules.items())}
 
-    def __getitem__(self, day: str | int) -> 'DaySchedule':
-        if isinstance(day, str):
-            day = int(day) if day.isnumeric() else list(map(str.lower, calendar.day_name)).index(day.lower())
-        return self.days[day]
+    @cached_property
+    def unit(self) -> str:
+        return self.meta.unit[0].lower()
+
+    def __getitem__(self, day: Day) -> 'DaySchedule':
+        day = _normalize_day(day)
+        try:
+            return self.days[day]
+        except KeyError:
+            if 0 <= day <= 6:
+                self.days[day] = day_schedule = DaySchedule(day, (), self)
+                return day_schedule
+            raise
+
+    def __iter__(self) -> Iterator['DaySchedule']:
+        for day in range(7):
+            yield self[day]
 
     def as_day_time_temp_map(self) -> dict[str, dict[str, float] | None]:
         """Mapping of {day name: {'HH:MM': temperature}}"""
@@ -158,35 +174,58 @@ class WeeklySchedule:
         path = Path(path)
         if not path.is_file():
             raise ValueError(f'Invalid schedule path: {path}')
-
         with path.open('r', encoding='utf-8') as f:
             data = json.load(f)
-
         return cls.from_dict(data)
+
+    def insert(self, day: Day, *args, **kwargs):
+        self[day].insert(*args, **kwargs)
+        self._update_continuations()
+
+    def remove(self, day: Day, time_of_day: TOD):
+        self[day].remove(time_of_day)
+        self._update_continuations()
+
+    def _update_continuations(self):
+        yesterday = self[6]
+        for today in self:
+            if yesterday and (last_entry := yesterday[-1]):
+                if not today:
+                    log.debug(f'Adding continuation entry to {today}')
+                    today.schedule.append(last_entry.make_continuation())
+                else:
+                    first = today[0]
+                    if first.is_continuation:
+                        if first.temp == last_entry.temp:
+                            log.debug(f'The continuation entry for {today} is already correct')
+                        else:
+                            cont = last_entry.make_continuation()
+                            log.debug(f'Updating continuation entry in {today} from {first} to {cont}')
+                            today[0] = cont
+                    elif first.time > 0:  # noqa
+                        log.debug(f'Adding continuation entry to {today}')
+                        today.schedule.insert(0, last_entry.make_continuation())
+                    else:
+                        log.debug(f'No continuation entry is needed for {today} due to explicit temp at time=0')
+                yesterday = today
 
 
 class DaySchedule:
-    def __init__(
-        self, day_num: str | int, schedule: Iterable[Union['ScheduleEntry', ScheduleEntryDict]], parent: WeeklySchedule
-    ):
-        self.num = int(day_num)
+    def __init__(self, day: Day | int, schedule: Iterable[SchedEntry], parent: WeeklySchedule):
+        if not 0 <= (day := _normalize_day(day)) <= 6:
+            raise ValueError(f'Invalid {day=} - must be between 0=Monday and 6=Sunday, inclusive')
+        self.num = day
         self.day = calendar.day_name[self.num]
         self.schedule = sorted(ScheduleEntry.from_dict(e) if isinstance(e, dict) else e for e in schedule)  # noqa
         self.parent = parent
-        if parent.meta.unit[0].lower() == 'f':
+        if parent.unit == 'f':
             for entry in self.schedule:
                 entry.temp = round(f2c(entry.temp), 2)
 
-    @classmethod
-    def from_time_temp_map(
-        cls, day_num: str | int, time_temp_map: dict[str, float], parent: WeeklySchedule,
-    ) -> 'DaySchedule':
-        meta = parent.meta
-        schedule = [
-            ScheduleEntry(wall_to_secs(tod_str), temp, meta.mode, meta.user_id, meta.user_num)
-            for tod_str, temp in time_temp_map.items()
-        ]
-        return cls(day_num, schedule, parent)
+    # region Dunder Methods
+
+    def __repr__(self) -> str:
+        return f'<{self.__class__.__name__}[{self.day}: {self.as_time_temp_map()}]>'
 
     def __lt__(self, other: 'DaySchedule') -> bool:
         return self.num < other.num
@@ -197,12 +236,29 @@ class DaySchedule:
     def __getitem__(self, index: int) -> 'ScheduleEntry':
         return self.schedule[index]
 
+    def __setitem__(self, index: int, entry: SchedEntry):
+        self.schedule[index] = ScheduleEntry.from_dict(entry) if isinstance(entry, dict) else entry
+
     def __iter__(self) -> Iterator[tuple[int, float, str]]:
         for entry in self.schedule:
             yield entry.time, entry.temp, entry.type
 
-    def as_time_temp_map(self, fahrenheit: bool = False) -> dict[str, float]:
-        if fahrenheit:
+    def __bool__(self) -> bool:
+        return bool(self.schedule)
+
+    # endregion
+
+    @classmethod
+    def from_time_temp_map(cls, day: Day, time_temp_map: dict[TOD, float], parent: WeeklySchedule) -> 'DaySchedule':
+        meta = parent.meta
+        schedule = [
+            ScheduleEntry(tod_secs(tod_str), temp, meta.mode, meta.user_id, meta.user_num)
+            for tod_str, temp in time_temp_map.items()
+        ]
+        return cls(day, schedule, parent)
+
+    def as_time_temp_map(self) -> dict[str, float]:
+        if self.parent.unit == 'f':
             return {secs_to_wall(d_time): round(c2f(temp), 2) for d_time, temp, mode in self}
         else:
             return {secs_to_wall(d_time): temp for d_time, temp, mode in self}
@@ -210,30 +266,27 @@ class DaySchedule:
     def as_dict(self) -> dict[str, 'ScheduleEntry']:
         return {str(i): entry for i, entry in enumerate(self.schedule)}
 
-    def insert(
-        self,
-        time_of_day: str | int,
-        temp: float,
-        user_id: str,
-        user_num: int = 1,
-        unit: str = 'c',
-        mode: str = None,
-    ):
-        time_of_day = wall_to_secs(time_of_day) if isinstance(time_of_day, str) else time_of_day
-        if not 0 <= time_of_day < 86400:
-            raise ValueError(f'Invalid {time_of_day=!r} ({secs_to_wall(time_of_day)}) - must be > 0 and < 86400')
+    def _time_pos(self, time_of_day: int) -> int:
+        return bisect_left(self.schedule, time_of_day, key=lambda e: e.time)
+
+    def insert(self, time_of_day: TOD, temp: float, user_id: str, user_num: int = 1, unit: str = 'c', mode: str = None):
+        time_of_day = tod_secs(time_of_day)
         if unit[0].lower() == 'f':
             temp = round(f2c(temp), 2)
-
-        if not (mode := mode or next((entry.type for entry in self.schedule), None)):
-            raise ValueError('mode is required when no previous schedule entries exist for a given day')
-
-        entry = ScheduleEntry(time_of_day, temp, mode, user_id, user_num)
-        pos = bisect_left(self.schedule, time_of_day, key=lambda e: e.time)
+        entry = ScheduleEntry(time_of_day, temp, mode or self.parent.meta.unit, user_id, user_num)
+        pos = self._time_pos(time_of_day)
         if pos and self.schedule[pos].time == time_of_day:
             self.schedule[pos] = entry
         else:
             self.schedule.insert(pos + 1, entry)
+
+    def remove(self, time_of_day: TOD):
+        time_of_day = tod_secs(time_of_day)
+        pos = self._time_pos(time_of_day)
+        if pos and self.schedule[pos].time == time_of_day:
+            self.schedule.pop(pos)
+        else:
+            raise TimeNotFound(f'Invalid {time_of_day=} ({secs_to_wall(time_of_day)}) - not found in {self}')
 
 
 @dataclass
@@ -252,14 +305,17 @@ class ScheduleMeta:
 
 @dataclass(order=True)
 class ScheduleEntry:
-    time: int = field(compare=True)
+    time: InitVar[int] = field(compare=True)
     temp: float = field(compare=False)
     type: str = field(compare=False)
-    touched_user_id: str = field(compare=False)
+    touched_user_id: str | None = field(compare=False)
     touched_by: int = field(compare=False, default=1)
     touched_tzo: int = field(compare=False, default=-14400)
     entry_type: str = field(compare=False, default='setpoint')
     touched_at: int = field(compare=False, default_factory=lambda: int(time.time()))
+
+    def __post_init__(self, time: TOD):  # noqa
+        self.time = tod_secs(time)  # noqa
 
     @classmethod
     def from_dict(cls, entry: dict[str, str | int | float]) -> 'ScheduleEntry':
@@ -268,6 +324,13 @@ class ScheduleEntry:
 
     def as_dict(self) -> dict[str, str | int | float]:
         return asdict(self)
+
+    @property
+    def is_continuation(self) -> bool:
+        return self.entry_type == 'continuation'
+
+    def make_continuation(self) -> 'ScheduleEntry':
+        return ScheduleEntry(0, self.temp, self.type, None, 1, entry_type='continuation')
 
 
 def _fields(obj):
@@ -283,6 +346,28 @@ def secs_to_wall(seconds: int) -> str:
 def wall_to_secs(wall: str) -> int:
     hour, minute = map(int, wall.split(':'))
     return (hour * 60 + minute) * 60
+
+
+def tod_secs(time_of_day: TOD) -> int:
+    if isinstance(time_of_day, str):
+        hour, minute = map(int, time_of_day.split(':'))
+        time_of_day = (hour * 60 + minute) * 60
+    if not 0 <= time_of_day < 86400:
+        tod_str = secs_to_wall(time_of_day)
+        raise ValueError(f'Invalid {time_of_day=} ({tod_str}) - must be between 0 (0:00) and 86400 (24:00)')
+    return time_of_day
+
+
+def _normalize_day(day: str | int) -> int:
+    if isinstance(day, str):
+        try:
+            names_index = _normalize_day._names_index
+        except AttributeError:
+            _normalize_day._names_index = names_index = list(map(str.lower, calendar.day_name)).index
+
+        return int(day) if day.isnumeric() else names_index(day.lower())
+    else:
+        return day
 
 
 def _previous_day(day: int) -> int:
