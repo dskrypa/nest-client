@@ -2,7 +2,7 @@
 
 from itertools import chain
 from pathlib import Path
-from setuptools import setup
+from setuptools import setup, find_packages
 
 project_root = Path(__file__).resolve().parent
 
@@ -42,7 +42,7 @@ setup(
     long_description=long_description,
     url=about['__url__'],
     project_urls={'Source': about['__url__']},
-    packages=['nest'],
+    packages=find_packages('lib'),
     package_dir={'': 'lib'},
     classifiers=[
         'Programming Language :: Python :: 3',
