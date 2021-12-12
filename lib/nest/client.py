@@ -46,6 +46,7 @@ class NestWebClient:
         self.not_refreshing = Event()  # cleared while a refresh is pending
         self.not_refreshing.set()
         self._latest_transport_url = None
+        self._latest_weather = None
         self._last_known_reauth = datetime.now()
 
     @property
@@ -87,6 +88,7 @@ class NestWebClient:
             payload = {'known_bucket_types': bucket_types, 'known_bucket_versions': []}
             resp = client.post(f'api/0.1/user/{self.user_id}/app_launch', json=payload, timeout=timeout).json()
             if self._needs_transport_url_update():
+                self._latest_weather = resp['weather_for_structures']
                 self._latest_transport_url = urlparse(resp['service_urls']['urls']['transport_url'])
                 self._last_known_reauth = self.auth.last_reauth
             return resp
@@ -99,7 +101,13 @@ class NestWebClient:
         with self.transport_url() as client:
             return client.get(f'v2/mobile/user.{self.user_id}').json()
 
-    def get_weather(self, zip_code: Union[str, int] = None, country_code: str = 'US'):
+    def get_weather_location(self) -> tuple[str, str]:
+        if self._latest_weather is None:
+            self.app_launch()
+        location = next(iter(self._latest_weather.values()))['location']
+        return location['zip'], location['country']
+
+    def get_weather(self, zip_code: Union[str, int] = None, country_code: str = None) -> dict[str, Any]:
         """
         Get the weather forecast.  Response format::
             {
@@ -107,8 +115,7 @@ class NestWebClient:
               "forecast":{
                 "hourly":[{"time":1569769200, "temp":74.0, "humidity":55},...],
                 "daily":[{
-                  "conditions":"Partly Cloudy", "date":1569729600, "high_temperature":77.0, "icon":"partlycloudy",
-                  "low_temperature":60.0
+                  "conditions":"Sunny","date":1569729600,"high_temperature":77.0,"icon":"sunny","low_temperature":60.0
                 },...]
               },
               "now":{
@@ -120,14 +127,12 @@ class NestWebClient:
 
         :param zip_code: A 5-digit zip code
         :param country_code: A 2-letter country code (such as 'US')
-        :return dict: The parsed response
+        :return: The parsed response
         """
         if zip_code is None:
-            resp = self.app_launch()
-            location = next(iter(resp['weather_for_structures'].values()))['location']
-            zip_code = location['zip']
-            country_code = country_code or location['country']
+            zip_code, country_code = self.get_weather_location()
 
+        country_code = country_code or 'US'
         with self.nest_url() as client:
             return client.get(f'api/0.1/weather/forecast/{zip_code},{country_code}').json()
 
