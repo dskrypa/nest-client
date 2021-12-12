@@ -66,6 +66,7 @@ def parser():
         schd_show = schd_parser.add_subparser('sub_action', 'show', 'Show the current schedule')
         schd_show.add_argument('--format', '-f', choices=Printer.formats, help='Output format')
         schd_show.add_argument('--raw', '-r', action='count', default=0, help='Show the schedule in the Nest format instead of readable')
+        schd_show.add_argument('--unit', '-u', choices=('f', 'c'), help='Display unit (default: from config)')
 
         schd_parser.add_common_arg('--dry_run', '-D', action='store_true', help='Print actions that would be taken instead of taking them')
 
@@ -135,7 +136,7 @@ def manage_schedule(nest: 'NestWebClient', action: str, args):
         elif action == 'save':
             schedule.save(args.path, args.overwrite, args.dry_run)
         elif action == 'show':
-            schedule.print(args.format or ('yaml' if args.raw else 'table'), args.raw, args.raw > 1)
+            schedule.print(args.format or ('yaml' if args.raw else 'table'), args.raw, args.unit, args.raw > 1)
         else:
             raise ValueError(f'Unexpected sub_{action=}')
 

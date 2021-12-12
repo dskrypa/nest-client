@@ -109,11 +109,11 @@ class Schedule(NestObject, type='schedule', parent_type='device'):
             resp = self._set_full(payload, 'OVERWRITE')
             log.debug('Push response: {}'.format(json.dumps(resp.json(), indent=4, sort_keys=True)))
 
-    def print(self, output_format: str = 'table', full: bool = False, raw: bool = False):
+    def print(self, output_format: str = 'table', full: bool = False, unit: str = None, raw: bool = False):
         if raw:
             Printer(output_format).pprint(self.to_dict(), sort_keys=False, indent_nested_lists=True)
         else:
-            self.weekly_schedule.print(output_format, full)
+            self.weekly_schedule.print(output_format, full, unit)
 
 
 class WeeklySchedule:
@@ -141,10 +141,10 @@ class WeeklySchedule:
         for day in range(7):
             yield self[day]
 
-    def as_day_time_temp_map(self) -> dict[str, dict[str, float] | None]:
+    def as_day_time_temp_map(self, convert: bool = None) -> dict[str, dict[str, float] | None]:
         """Mapping of {day name: {'HH:MM': temperature}}"""
         return {
-            calendar.day_name[day_num]: schedule.as_time_temp_map() if (schedule := self.days.get(day_num)) else None
+            calendar.day_name[day_num]: ds.as_time_temp_map(convert) if (ds := self.days.get(day_num)) else None
             for day_num in (6, 0, 1, 2, 3, 4, 5)  # Su M Tu W Th F Sa
         }
 
@@ -237,23 +237,25 @@ class WeeklySchedule:
 
     # region Output / Formatting Methods
 
-    def format(self, output_format: str = 'table', full: bool = False):
+    def format(self, output_format: str = 'table', full: bool = False, unit: str = None):
+        convert = None if unit is None else unit.lower()[0] == 'f'
         if output_format == 'table':
-            schedule = self.as_day_time_temp_map()
+            schedule = self.as_day_time_temp_map(convert)
             rows = [{'Day': day, **time_temp_map} for day, time_temp_map in schedule.items() if time_temp_map]
             times = {t for time_temp_map in schedule.values() for t in time_temp_map if time_temp_map}
             columns = [SimpleColumn('Day'), *(SimpleColumn(_time, ftype='.1f') for _time in sorted(times))]
             table = Table(*columns, update_width=True)
             return table.format_rows(rows, True)
         else:
-            schedule = self.to_update_dict() if full else self.as_day_time_temp_map()
+            schedule = self.to_update_dict() if full else self.as_day_time_temp_map(convert)
             return Printer(output_format).pformat(schedule, sort_keys=False, indent_nested_lists=True)
 
-    def print(self, output_format: str = 'table', full: bool = False):
+    def print(self, output_format: str = 'table', full: bool = False, unit: str = None):
         if output_format == 'table':
             meta = self.meta
-            print(f'Schedule name={meta.name!r} mode={meta.mode!r} ver={meta.ver!r} unit={self.unit}\n')
-        print(self.format(output_format, full))
+            _unit = unit.lower()[0] if unit else self.unit
+            print(f'Schedule name={meta.name!r} mode={meta.mode!r} ver={meta.ver!r} unit={_unit}\n')
+        print(self.format(output_format, full, unit))
 
     # endregion
 
@@ -268,9 +270,6 @@ class DaySchedule:
         self.day = calendar.day_name[self.num]
         self.schedule = sorted(ScheduleEntry.from_dict(e) if isinstance(e, dict) else e for e in schedule)  # noqa
         self.parent = parent
-        # if parent.unit == 'f':
-        #     for entry in self.schedule:
-        #         entry.temp = round(f2c(entry.temp), 2)
 
     # region Dunder Methods
 
@@ -301,14 +300,15 @@ class DaySchedule:
     @classmethod
     def from_time_temp_map(cls, day: Day, time_temp_map: dict[TOD, float], parent: WeeklySchedule) -> 'DaySchedule':
         meta = parent.meta
+        norm_temp = (lambda t: round(f2c(t), 2)) if parent.unit == 'f' else (lambda t: t)
         schedule = [
-            ScheduleEntry(tod_secs(tod_str), temp, meta.mode, meta.user_id, meta.user_num)
+            ScheduleEntry(tod_secs(tod_str), norm_temp(temp), meta.mode, meta.user_id, meta.user_num)
             for tod_str, temp in time_temp_map.items()
         ]
         return cls(day, schedule, parent)
 
-    def as_time_temp_map(self) -> dict[str, float]:
-        if self.parent.unit == 'f':
+    def as_time_temp_map(self, convert: bool = None) -> dict[str, float]:
+        if convert or (convert is None and self.parent.unit == 'f'):
             return {secs_to_wall(d_time): round(c2f(temp), 2) for d_time, temp, mode in self}
         else:
             return {secs_to_wall(d_time): temp for d_time, temp, mode in self}
