@@ -5,6 +5,7 @@ Nest config
 """
 
 import logging
+import os
 from configparser import ConfigParser, NoSectionError, NoOptionError
 from datetime import datetime
 from functools import cached_property
@@ -27,7 +28,16 @@ CONFIG_ITEMS = {
 
 class NestConfig:
     def __init__(self, path: str = None, overrides: Mapping[str, Optional[str]] = None):
-        self.path = Path(path or DEFAULT_CONFIG_PATH).expanduser().resolve()
+        path = path or DEFAULT_CONFIG_PATH
+        if path.startswith('~/'):
+            try:
+                import pwd  # noqa  # when run via FreeBSD as a service, HOME=/, and posixpath.expanduser trusts the env
+            except ImportError:
+                self.path = Path(path).expanduser().resolve()  # Likely on Windows
+            else:
+                self.path = Path(pwd.getpwuid(os.getuid()).pw_dir, path[2:]).resolve()
+        else:
+            self.path = Path(path).expanduser().resolve()
         self._overrides = overrides or {}
 
     @cached_property
