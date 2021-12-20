@@ -54,6 +54,7 @@ class Device(NestObject, type='device', parent_type=None):
 
 
 class ThermostatDevice(Device, type='device', parent_type=None, key='hvac_wires'):
+    name = NestProperty('name', default='Thermostat')
     backplate_model = NestProperty('backplate_model')
     backplate_serial = NestProperty('backplate_serial_number')
     _backplate_temperature = NestProperty('backplate_temperature')  # type: float  # celsius
@@ -88,7 +89,7 @@ class ThermostatDevice(Device, type='device', parent_type=None, key='hvac_wires'
 
 class Shared(NestObject, type='shared', parent_type='device'):
     parent: 'NestDevice'
-    name = NestProperty('name')  # type: str
+    name = NestProperty('name', default='Shared')  # type: str
     mode = NestProperty('target_temperature_type')  # type: str  # one of: TARGET_TEMP_TYPES
     target_temperature_type = NestProperty('target_temperature_type')  # type: str  # one of: TARGET_TEMP_TYPES
     _target_temperature_high = NestProperty('target_temperature_high')  # type: float  # celsius
