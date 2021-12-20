@@ -324,7 +324,7 @@ class NestWebAuth:
         self._client = client
         self.config = config
         if 'oauth' not in self.config:
-            raise ConfigError('Missing required oauth configs')
+            raise ConfigError(f'Missing required oauth configs in {self.config.path.as_posix()}')
         self.cache_path = get_user_cache_dir('nest').joinpath('session.pickle')
         self.force_reauth = force_reauth
         self.last_reauth = None
