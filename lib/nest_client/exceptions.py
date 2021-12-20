@@ -4,6 +4,23 @@ Exceptions for working with Nest thermostats
 :author: Doug Skrypa
 """
 
+from os import environ
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .config import NestConfig
+
+__all__ = [
+    'NestException',
+    'SessionExpired',
+    'AuthorizationError',
+    'ConfigError',
+    'TimeNotFound',
+    'NestObjectNotFound',
+    'TableFormatException',
+    'DictAttrFieldNotFoundError',
+]
+
 
 class NestException(Exception):
     """Base exception"""
@@ -18,7 +35,12 @@ class AuthorizationError(NestException):
 
 
 class ConfigError(NestException):
-    pass
+    def __init__(self, config: 'NestConfig', message: str):
+        self.config = config
+        self.message = message
+
+    def __repr__(self) -> str:
+        return f'{self.__class__.__name__}: {self.message} in {self.config.path.as_posix()}\nenv: {environ}'
 
 
 class TimeNotFound(NestException):
