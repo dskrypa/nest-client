@@ -39,7 +39,7 @@ class ConfigError(NestException):
         self.config = config
         self.message = message
 
-    def __repr__(self) -> str:
+    def __str__(self) -> str:
         return f'{self.__class__.__name__}: {self.message} in {self.config.path.as_posix()}\nenv: {environ}'
 
 
