@@ -27,7 +27,7 @@ CONFIG_ITEMS = {
 
 class NestConfig:
     def __init__(self, path: str = None, overrides: Mapping[str, Optional[str]] = None):
-        self.path = Path(path or DEFAULT_CONFIG_PATH).expanduser()
+        self.path = Path(path or DEFAULT_CONFIG_PATH).expanduser().resolve()
         self._overrides = overrides or {}
 
     @cached_property
