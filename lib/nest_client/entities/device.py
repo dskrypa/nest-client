@@ -9,12 +9,14 @@ import time
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Optional
 
+from async_property import async_cached_property
+
 from ..constants import TARGET_TEMP_TYPES, NEST_WHERE_MAP, ALLOWED_TEMPS
 from ..utils import format_duration, fahrenheit_to_celsius as f2c
 from .base import NestObject, NestProperty, TemperatureProperty
 
 if TYPE_CHECKING:
-    from requests import Response
+    from httpx import Response
     from .structure import Structure
 
 __all__ = ['Device', 'ThermostatDevice', 'Shared', 'EnergyUsage', 'EnergyUsageDay', 'NestDevice']
@@ -35,13 +37,13 @@ class Device(NestObject, type='device', parent_type=None):
     def __repr__(self) -> str:
         return f'<{self.__class__.__name__}[{self.serial}, name={self.name!r}, model={self.model_version!r}]>'
 
-    @cached_property
-    def structure(self) -> Optional['Structure']:
-        return next((st for st in self.client.get_structures().values() if self.key in st.devices), None)
+    @async_cached_property
+    async def structure(self) -> Optional['Structure']:
+        return next((st for st in (await self.client.get_structures()).values() if self.key in st.devices), None)
 
-    @cached_property
-    def shared(self) -> Optional['Shared']:
-        return self.children.get('shared')
+    @async_cached_property
+    async def shared(self) -> Optional['Shared']:
+        return (await self.children).get('shared')
 
     @cached_property
     def where(self) -> str | None:
@@ -74,17 +76,17 @@ class ThermostatDevice(Device, type='device', parent_type=None, key='hvac_wires'
     def fan(self) -> dict[str, str | bool | int]:
         return {k[4:]: v for k, v in self.value.items() if k.startswith('fan_')}
 
-    def start_fan(self, duration: int = 1800) -> 'Response':
+    async def start_fan(self, duration: int = 1800) -> 'Response':
         """
         :param duration: Number of seconds for which the fan should run
         :return: The raw response
         """
         timeout = int(time.time()) + duration
         log.debug(f'Submitting fan start request with duration={format_duration(duration)} => end time of {timeout}')
-        return self._set_key('fan_timer_timeout', timeout)
+        return await self._set_key('fan_timer_timeout', timeout)
 
-    def stop_fan(self) -> 'Response':
-        return self._set_key('fan_timer_timeout', 0)
+    async def stop_fan(self) -> 'Response':
+        return await self._set_key('fan_timer_timeout', 0)
 
 
 class Shared(NestObject, type='shared', parent_type='device'):
@@ -127,10 +129,14 @@ class Shared(NestObject, type='shared', parent_type='device'):
         return ALLOWED_TEMPS[self.config.temp_unit]
 
     @property
+    def _target_temp_range(self) -> tuple[float, float]:
+        return self._target_temperature_low, self._target_temperature_high
+
+    @property
     def target_temp_range(self) -> tuple[float, float]:
         return self.target_temperature_low, self.target_temperature_high
 
-    def set_temp_range(self, low: float, high: float) -> 'Response':
+    async def set_temp_range(self, low: float, high: float) -> 'Response':
         """
         :param low: Minimum temperature to maintain in Celsius (heat will turn on if the temp drops below this)
         :param high: Maximum temperature to allow in Celsius (air conditioning will turn on above this)
@@ -139,16 +145,17 @@ class Shared(NestObject, type='shared', parent_type='device'):
         if self.config.temp_unit == 'f':
             low = f2c(low)
             high = f2c(high)
-        return self._set_full({'target_temperature_low': low, 'target_temperature_high': high})
+        return await self._set_full({'target_temperature_low': low, 'target_temperature_high': high})
 
-    def set_temp(self, temp: float, temporary: bool = False, convert: bool = True) -> 'Response':
+    async def set_temp(self, temp: float, temporary: bool = False, convert: bool = True) -> 'Response':
         if convert and self.config.temp_unit == 'f':
             temp = f2c(temp)
         adj = 'temporary' if temporary else 'requested'
         log.debug(f'Setting {adj} temp={temp:.1f}')
-        return self._set_key('target_temperature', temp)
+        return await self._set_key('target_temperature', temp)
 
-    def set_temp_and_force_run(self, temp: float) -> 'Response':
+    async def set_temp_and_force_run(self, temp: float) -> 'Response':
+        # TODO: Set structure.away to False if it is True?
         if fahrenheit := self.config.temp_unit == 'f':
             temp = f2c(temp)
         mode = self.mode.upper()
@@ -157,33 +164,33 @@ class Shared(NestObject, type='shared', parent_type='device'):
             delta = current - temp
             if current > temp and delta < 0.5:
                 tmp = current - 0.6
-                self.set_temp(tmp, True, False)
+                await self.set_temp(tmp, True, False)
                 time.sleep(3)
         elif mode == 'HEAT':
             delta = temp - current
             log.debug(f'{current=} {temp=} {delta=} {fahrenheit=}')
             if current < temp and delta < 0.5:
                 tmp = current + 0.6
-                self.set_temp(tmp, True, False)
+                await self.set_temp(tmp, True, False)
                 time.sleep(3)
         else:
             log.log(19, f'Unable to force unit to run for {mode=!r}')
-        return self.set_temp(temp, convert=False)
+        return await self.set_temp(temp, convert=False)
 
-    def set_mode(self, mode: str) -> 'Response':
+    async def set_mode(self, mode: str) -> 'Response':
         """
         :param mode: One of 'cool', 'heat', 'range', or 'off'
         :return: The raw response
         """
         if mode not in TARGET_TEMP_TYPES:
             raise ValueError(f'Invalid {mode=}')
-        return self._set_key('target_temperature_type', mode)
+        return await self._set_key('target_temperature_type', mode)
 
-    def maybe_update_mode(self, mode: str, dry_run: bool = False):
+    async def maybe_update_mode(self, mode: str, dry_run: bool = False):
         if (current := self.mode.lower()) != (proposed := mode.lower()):
             log.info(f'{"[DRY RUN] Would update" if dry_run else "Updating"} mode from {current} to {proposed}')
             if not dry_run:
-                self.set_mode(proposed)
+                await self.set_mode(proposed)
 
 
 class EnergyUsage(NestObject, type='energy_latest', parent_type='device'):

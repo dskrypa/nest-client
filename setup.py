@@ -26,10 +26,11 @@ optional_dependencies['ALL'] = sorted(set(chain.from_iterable(optional_dependenc
 
 requirements = [
     'requests_client@ git+git://github.com/dskrypa/requests_client',
-    'requests',
+    'httpx',
     'colored',
     'pyyaml',
     'tzdata',
+    'async_property',
 ]
 
 

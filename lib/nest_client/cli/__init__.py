@@ -91,80 +91,81 @@ def parser():
 
 
 @wrap_main
-def main():
+async def main():
     args = parser().parse_args()
     log_fmt = '%(asctime)s %(levelname)s %(name)s %(lineno)d %(message)s' if args.verbose else '%(message)s'
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format=log_fmt)
 
     from nest_client.client import NestWebClient
 
-    nest = NestWebClient(args.config, args.reauth)
-
-    if (action := args.action) == 'status':
-        show_status(nest, args.details, args.format)
-    elif action in {'temp', 'range', 'mode', 'fan'}:
-        control_thermostat(nest, action, args)
-    elif action == 'show':
-        show_item(nest, args.item, args.format, args.buckets, args.raw)
-    elif action == 'schedule':
-        manage_schedule(nest, args.sub_action, args)
-    elif action == 'full_status':
-        show_full_status(nest, args.path, args.diff)
-    elif action == 'config':
-        if args.sub_action == 'show':
-            log.warning(
-                'WARNING: The [oauth] section contains credentials that should be kept secret - do not share this'
-                ' output with anyone\n',
-                extra={'color': 'red'},
-            )
-            with nest.config.path.open('r') as f:
-                print(f.read())
-        elif args.sub_action == 'set':
-            nest.config.maybe_set(args.section, args.key, args.value)
+    async with NestWebClient(args.config, args.reauth) as nest:
+        if (action := args.action) == 'status':
+            await show_status(nest, args.details, args.format)
+        elif action in {'temp', 'range', 'mode', 'fan'}:
+            await control_thermostat(nest, action, args)
+        elif action == 'show':
+            await show_item(nest, args.item, args.format, args.buckets, args.raw)
+        elif action == 'schedule':
+            await manage_schedule(nest, args.sub_action, args)
+        elif action == 'full_status':
+            await show_full_status(nest, args.path, args.diff)
+        elif action == 'config':
+            if args.sub_action == 'show':
+                log.warning(
+                    'WARNING: The [oauth] section contains credentials that should be kept secret - do not share this'
+                    ' output with anyone\n',
+                    extra={'color': 'red'},
+                )
+                with nest.config.path.open('r') as f:
+                    print(f.read())
+            elif args.sub_action == 'set':
+                nest.config.maybe_set(args.section, args.key, args.value)
+            else:
+                raise ValueError(f'Unexpected config sub-action={args.sub_action!r}')
         else:
-            raise ValueError(f'Unexpected config sub-action={args.sub_action!r}')
-    else:
-        raise ValueError(f'Unexpected {action=!r}')
+            raise ValueError(f'Unexpected {action=!r}')
 
 
-def manage_schedule(nest: 'NestWebClient', action: str, args):
+async def manage_schedule(nest: 'NestWebClient', action: str, args):
     from nest_client.entities import Schedule
 
     if action == 'load':
-        Schedule.from_file(nest, args.path).push(force=args.force, dry_run=args.dry_run)
+        schedule = await Schedule.from_file(nest, args.path)
+        await schedule.push(force=args.force, dry_run=args.dry_run)
     else:
-        schedule = Schedule.find(nest)
+        schedule = await Schedule.find(nest)  # type: Schedule
         if action in {'add', 'remove'}:
-            schedule.update(args.cron, action, args.temp, args.unit, dry_run=args.dry_run)
+            await schedule.update(args.cron, action, args.temp, args.unit, dry_run=args.dry_run)
         elif action == 'save':
-            schedule.save(args.path, args.overwrite, args.dry_run)
+            await schedule.save(args.path, args.overwrite, args.dry_run)
         elif action == 'show':
             schedule.print(args.format or ('yaml' if args.raw else 'table'), args.raw, args.unit, args.raw > 1)
         else:
             raise ValueError(f'Unexpected sub_{action=}')
 
 
-def control_thermostat(nest: 'NestWebClient', action: str, args):
+async def control_thermostat(nest: 'NestWebClient', action: str, args):
     from nest_client.entities import ThermostatDevice
 
-    thermostat = ThermostatDevice.find(nest)
+    thermostat = await ThermostatDevice.find(nest)
     if action == 'fan':
         if args.state == 'on':
-            thermostat.start_fan(args.duration)
+            await thermostat.start_fan(args.duration)
         elif args.state == 'off':
-            thermostat.stop_fan()
+            await thermostat.stop_fan()
         else:
             raise ValueError(f'Unexpected {args.state=!r}')
     else:
+        shared = await thermostat.shared
         if action == 'temp':
             if args.only_set:
-                thermostat.shared.set_temp(args.temp)
+                await shared.set_temp(args.temp)
             else:
-                thermostat.shared.set_temp_and_force_run(args.temp)
+                await shared.set_temp_and_force_run(args.temp)
         elif action == 'range':
-            thermostat.shared.set_temp_range(args.low, args.high)
+            await shared.set_temp_range(args.low, args.high)
         elif action == 'mode':
-            thermostat.shared.set_mode(args.mode)
+            await shared.set_mode(args.mode)
         else:
             raise ValueError(f'Unexpected {action=}')
 
@@ -181,10 +182,10 @@ def _convert_temp_values(status: dict[str, dict[str, Any]]):
             status[section][key] = c2f(status[section][key])
 
 
-def show_status(nest: 'NestWebClient', details: bool, out_fmt: str):
+async def show_status(nest: 'NestWebClient', details: bool, out_fmt: str):
     from nest_client.entities import ThermostatDevice
 
-    device = ThermostatDevice.find(nest)
+    device = await ThermostatDevice.find(nest)
     if details:
         status = {'device': device.value, 'shared': device.shared.value}
         if nest.config.temp_unit == 'f':
@@ -203,14 +204,15 @@ def show_status(nest: 'NestWebClient', details: bool, out_fmt: str):
             fix_ansi_width=True,
         )
 
-        current = device.shared.current_temperature
-        target = device.shared.target_temperature
-        target_lo, target_hi = device.shared.target_temp_range
+        shared = await device.shared
+        current = shared.current_temperature
+        target = shared.target_temperature
+        target_lo, target_hi = shared.target_temp_range
         status_table = {
             'Mode': colored(mode, 14 if mode == 'COOL' else 13 if mode == 'RANGE' else 9),
             'Humidity': device.humidity,
             'Temperature': colored('{:>11.1f}'.format(current), 11),
-            'Fan': colored('RUNNING', 10) if device.shared.running else colored('OFF', 8),
+            'Fan': colored('RUNNING', 10) if shared.running else colored('OFF', 8),
             'Target (low)': colored('{:>12.1f}'.format(target_lo), 14 if target_lo < current else 9),
             'Target (high)': colored('{:>13.1f}'.format(target_hi), 14 if target_hi < current else 9),
             'Target': colored('{:>6.1f}'.format(target), 14 if target < current else 9),
@@ -218,28 +220,29 @@ def show_status(nest: 'NestWebClient', details: bool, out_fmt: str):
         tbl.print_rows([status_table])
 
 
-def show_item(nest: 'NestWebClient', item: str, out_fmt: str = None, buckets=None, raw: bool = False):
+async def show_item(nest: 'NestWebClient', item: str, out_fmt: str = None, buckets=None, raw: bool = False):
     if item == 'schedule':
-        schedule = nest.get_object('schedule')  # type: Schedule
-        schedule.weekly_schedule.print(out_fmt or ('raw' if raw else 'table'), 'raw' if raw else 'pretty')
+        schedule = await nest.get_object('schedule')  # type: Schedule
+        schedule.weekly_schedule.print(out_fmt or ('raw' if raw else 'table'), raw)
     else:
         if item == 'energy':
-            data = nest.get_object('energy_latest').value
+            data = (await nest.get_object('energy_latest')).value
         elif item == 'weather':
-            data = nest.get_weather()
+            data = await nest.get_weather()
         elif item == 'buckets':
-            data = nest.app_launch(buckets)
+            data = await nest.app_launch(buckets)
             if not raw:
                 data = data['updated_buckets']
         elif item == 'bucket_names':
-            data = {obj.type: names for obj, names in nest.get_object('buckets').types_by_parent().items()}
+            bucket = await nest.get_object('buckets')
+            data = {obj.type: names for obj, names in (await bucket.types_by_parent()).items()}
         else:
             raise ValueError(f'Unexpected {item=!r}')
 
         Printer(out_fmt or 'yaml').pprint(data)
 
 
-def show_full_status(nest, path: str = None, diff: bool = False):
+async def show_full_status(nest, path: str = None, diff: bool = False):
     import json
     import time
     path = Path(path or '~/etc/nest/status').expanduser()
@@ -248,7 +251,7 @@ def show_full_status(nest, path: str = None, diff: bool = False):
     elif not path.exists():
         path.mkdir(parents=True)
 
-    data = nest.app_launch(['device', 'shared'])
+    data = await nest.app_launch(['device', 'shared'])
     status_path = path.joinpath(f'status_{int(time.time())}.json')
     log.info(f'Saving status to {status_path}')
     with status_path.open('w', encoding='utf-8', newline='\n') as f:

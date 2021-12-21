@@ -8,6 +8,7 @@ import calendar
 import json
 import logging
 import time
+from asyncio import get_running_loop
 from bisect import bisect_left
 from dataclasses import dataclass, field, fields, asdict, InitVar
 from functools import cached_property
@@ -45,14 +46,15 @@ class Schedule(NestObject, type='schedule', parent_type='device'):
     # region Class Methods
 
     @classmethod
-    def from_weekly(cls, client: 'NestWebClient', weekly_schedule: 'WeeklySchedule') -> 'Schedule':
+    async def from_weekly(cls, client: 'NestWebClient', weekly_schedule: 'WeeklySchedule') -> 'Schedule':
         meta = weekly_schedule.meta
-        serial = meta.serial or client.config.serial or client.get_device().serial  # exc if many/no devices are found
+        serial = meta.serial or client.config.serial or (await client.get_device()).serial  # exc if many/no devices are found
         return cls(f'schedule.{serial}', None, None, weekly_schedule.to_update_dict(), client)
 
     @classmethod
-    def from_file(cls, client: 'NestWebClient', path: Union[str, Path]) -> 'Schedule':
-        return cls.from_weekly(client, WeeklySchedule.from_file(path))
+    async def from_file(cls, client: 'NestWebClient', path: Union[str, Path]) -> 'Schedule':
+        weekly_schedule = await get_running_loop().run_in_executor(None, WeeklySchedule.from_file, path)
+        return await cls.from_weekly(client, weekly_schedule)
 
     # endregion
 
@@ -68,7 +70,7 @@ class Schedule(NestObject, type='schedule', parent_type='device'):
 
     @cached_property
     def meta(self) -> 'ScheduleMeta':
-        user_id = f'user.{self.client.user_id}'
+        user_id = f'user.{self.client._user_id}'
         user_num = self.user_id_num_map[user_id]
         return ScheduleMeta(self.serial, self.name, self.mode, user_id, self.config.temp_unit, user_num, self.version)
 
@@ -90,7 +92,7 @@ class Schedule(NestObject, type='schedule', parent_type='device'):
             with path.open('w', encoding='utf-8', newline='\n') as f:
                 json.dump(self.weekly_schedule.to_dict(), f, indent=4, sort_keys=False)
 
-    def update(
+    async def update(
         self,
         cron_str: str,
         action: str,
@@ -104,10 +106,10 @@ class Schedule(NestObject, type='schedule', parent_type='device'):
         changes_made = self.weekly_schedule.update(cron_str, action, temp, unit, mode)
         if changes_made:
             # TODO: Show a diff instead of just the new schedule
-            self.push(unit=unit, force=force, dry_run=dry_run)
+            await self.push(unit=unit, force=force, dry_run=dry_run)
 
-    def push(self, *, unit: str = None, force: bool = False, dry_run: bool = False):
-        self.parent.shared.maybe_update_mode(self.mode, dry_run)
+    async def push(self, *, unit: str = None, force: bool = False, dry_run: bool = False):
+        await self.parent.shared.maybe_update_mode(self.mode, dry_run)
         payload = self.weekly_schedule.to_update_dict()
         if payload == self.value:
             if force:
@@ -122,7 +124,7 @@ class Schedule(NestObject, type='schedule', parent_type='device'):
         schedule_mode = self.mode.lower()
         log.info(f'{prefix} changes to {schedule_mode} schedule with name={self.name!r}')
         if not dry_run:
-            resp = self._set_full(payload, 'OVERWRITE')
+            resp = await self._set_full(payload, 'OVERWRITE')
             log.debug('Push response: {}'.format(json.dumps(resp.json(), indent=4, sort_keys=True)))
 
     def print(self, output_format: str = 'table', full: bool = False, unit: str = None, raw: bool = False):

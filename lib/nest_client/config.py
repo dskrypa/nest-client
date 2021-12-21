@@ -35,7 +35,7 @@ class NestConfig:
             except ImportError:
                 self.path = Path(path).expanduser().resolve()  # Likely on Windows
             else:
-                self.path = Path(pwd.getpwuid(os.getuid()).pw_dir, path[2:]).resolve()
+                self.path = Path(pwd.getpwuid(os.getuid()).pw_dir, path[2:]).resolve()  # noqa
         else:
             self.path = Path(path).expanduser().resolve()
         self._overrides = overrides or {}

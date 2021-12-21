@@ -4,6 +4,7 @@
 
 import logging
 import sys
+from asyncio import run
 from functools import wraps
 
 __all__ = ['wrap_main']
@@ -20,9 +21,12 @@ def wrap_main(main):
     """
     @wraps(main)
     def run_main(*args, **kwargs):
+        async def _main():
+            return await main(*args, **kwargs)
+
         try:
             try:
-                main(*args, **kwargs)
+                run(_main())
             except OSError as e:
                 import platform
                 if platform.system().lower() == 'windows' and e.errno == 22:

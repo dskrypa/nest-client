@@ -6,16 +6,17 @@ Classes that represent Nest Structures, Users, Devices/Thermostats, etc.
 
 import logging
 from datetime import datetime
-from functools import cached_property
 from threading import RLock
 from typing import TYPE_CHECKING, Any, Union, Optional, TypeVar, Type, Callable
+
+from async_property import async_cached_property
 
 from ..constants import BUCKET_CHILD_TYPES
 from ..exceptions import NestObjectNotFound, DictAttrFieldNotFoundError
 from ..utils import ClearableCachedProperty, ClearableCachedPropertyMixin, cached_classproperty, celsius_to_fahrenheit
 
 if TYPE_CHECKING:
-    from requests import Response
+    from httpx import Response
     from ..client import NestWebClient
 
 __all__ = ['NestObject', 'NestObj', 'NestProperty', 'TemperatureProperty', 'NestObjectDict']
@@ -116,18 +117,20 @@ class NestObject(ClearableCachedPropertyMixin):
         return cls(obj['object_key'], obj['object_timestamp'], obj['object_revision'], obj['value'], client)
 
     @classmethod
-    def find(cls: Type[NestObj], client: 'NestWebClient', serial: str = None, type: str = None) -> NestObj:  # noqa
+    async def find(
+        cls: Type[NestObj], client: 'NestWebClient', serial: str = None, type: str = None  # noqa
+    ) -> NestObj:
         if type and cls.type is not None and type != cls.type:
             expected = cls._type_cls_map.get(type, NestObject).__name__
             raise ValueError(f'Use {expected} - {cls.__name__} is incompatible with {type=}')
-        return client.get_object(type or cls.type, serial, _sub_type_key=cls.sub_type_key)
+        return await client.get_object(type or cls.type, serial, _sub_type_key=cls.sub_type_key)
 
     @classmethod
-    def find_all(cls: Type[NestObj], client: 'NestWebClient', type: str = None) -> dict[str, NestObj]:  # noqa
+    async def find_all(cls: Type[NestObj], client: 'NestWebClient', type: str = None) -> dict[str, NestObj]:  # noqa
         if type and cls.type is not None and type != cls.type:
             expected = cls._type_cls_map.get(type, NestObject).__name__
             raise ValueError(f'Use {expected} - {cls.__name__} is incompatible with {type=}')
-        obj_dict = client.get_objects([type or cls.type])
+        obj_dict = await client.get_objects([type or cls.type])
         if sub_type_key := cls.sub_type_key:
             return {key: obj for key, obj in obj_dict.items() if obj.sub_type_key == sub_type_key}
         else:
@@ -135,8 +138,8 @@ class NestObject(ClearableCachedPropertyMixin):
 
     # region Refresh Status Methods
 
-    def needs_refresh(self, interval: float, timeout: float = 0.1) -> bool:
-        if not self.client.not_refreshing.wait(timeout):
+    async def needs_refresh(self, interval: float, timeout: float = 0.1) -> bool:
+        if not await self.client.not_refreshing.wait(timeout):
             return False
         elif self._needs_update:
             return True
@@ -148,12 +151,14 @@ class NestObject(ClearableCachedPropertyMixin):
         else:
             return {'object_key': self.key}
 
-    def refresh(self, all: bool = True, subscribe: bool = True, send_meta: bool = True, timeout: float = None):  # noqa
+    async def refresh(
+        self, all: bool = True, subscribe: bool = True, send_meta: bool = True, timeout: float = None  # noqa
+    ):
         last = self._refreshed
         if all:
-            self.client.refresh_known_objects(subscribe, send_meta, timeout)
+            await self.client.refresh_known_objects(subscribe, send_meta, timeout)
         else:
-            self.client.refresh_objects([self], subscribe, send_meta, timeout=timeout)
+            await self.client.refresh_objects([self], subscribe, send_meta, timeout=timeout)
         if last == self._refreshed:
             target = 'all objects' if all else self
             log.debug(f'Attempted to refresh {target}, but no fresh data was received for {self}')
@@ -175,24 +180,24 @@ class NestObject(ClearableCachedPropertyMixin):
         self._refreshed = datetime.now()
         self._needs_update = False
 
-    def _subscribe(self, send_meta: bool = False):
-        self._maybe_refresh(self.client.subscribe([self], send_meta), 'subscribe')
+    async def _subscribe(self, send_meta: bool = False):
+        self._maybe_refresh(await self.client.subscribe([self], send_meta), 'subscribe')
 
-    def _app_launch(self):
-        self._maybe_refresh(self.client.get_buckets([self.type]), 'app_launch')
+    async def _app_launch(self):
+        self._maybe_refresh(await self.client.get_buckets([self.type]), 'app_launch')
 
     # endregion
 
-    def _set_key(self, key: str, value: Any, op: str = 'MERGE') -> 'Response':
-        return self._set_full({key: value}, op)
+    async def _set_key(self, key: str, value: Any, op: str = 'MERGE') -> 'Response':
+        return await self._set_full({key: value}, op)
 
-    def _set_full(self, data: dict[str, Any], op: str = 'MERGE') -> 'Response':
+    async def _set_full(self, data: dict[str, Any], op: str = 'MERGE') -> 'Response':
         payload = {'objects': [{'object_key': self.key, 'op': op, 'value': data}]}
         self._needs_update = True
-        with self.client.transport_url() as client:
+        async with self.client.transport_url() as client:
             log.debug(f'Submitting {payload=}')
             self.clear_cached_properties()
-            return client.post('v5/put', json=payload)
+            return await client.post('v5/put', json=payload)
 
     # region Parent/Child Object Methods
 
@@ -203,24 +208,24 @@ class NestObject(ClearableCachedPropertyMixin):
         return self.child_types and nest_obj.type in self.child_types and nest_obj.serial == self.serial
 
     @cached_classproperty
-    def fetch_child_types(cls) -> tuple[str, ...]:
+    def fetch_child_types(cls) -> tuple[str, ...]:  # noqa
         if child_types := cls.child_types:
             return tuple(t for t, fetch in child_types.items() if fetch)
         return ()
 
-    @cached_property
-    def children(self) -> dict[str, NestObj]:
+    @async_cached_property
+    async def children(self) -> dict[str, NestObj]:
         """Mapping of {type: NestObject} for this object's children"""
         if fetch_child_types := self.fetch_child_types:
-            key_obj_map = self.client.get_objects(fetch_child_types)
+            key_obj_map = await self.client.get_objects(fetch_child_types)
             return {obj.type: obj for obj in key_obj_map.values() if obj.serial == self.serial}
         return {}
 
-    @cached_property
-    def parent(self) -> Optional[NestObj]:
+    @async_cached_property
+    async def parent(self) -> Optional[NestObj]:
         if self.parent_type:
             try:
-                return self.client.get_object(self.parent_type, self.serial)
+                return await self.client.get_object(self.parent_type, self.serial)
             except NestObjectNotFound:
                 return None
         return None
@@ -281,8 +286,9 @@ class NestProperty(ClearableCachedProperty):
         if obj is None:
             return self
 
-        if obj._needs_update:
-            obj.refresh()
+        # TODO: Fix update/refresh handling
+        # if obj._needs_update:
+        #     await obj.refresh()
 
         value = getattr(obj, self.attr)
         for key in self.path:
@@ -303,6 +309,11 @@ class NestProperty(ClearableCachedProperty):
         if '#' not in self.name:
             obj.__dict__[self.name] = value
         return value
+
+    # def __get__(self, obj: 'NestObject', cls):
+    #     if obj is None:
+    #         return self
+    #     return self._get(obj).__await__()
 
 
 class TemperatureProperty(NestProperty):
