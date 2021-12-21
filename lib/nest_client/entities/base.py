@@ -138,8 +138,8 @@ class NestObject(ClearableCachedPropertyMixin):
 
     # region Refresh Status Methods
 
-    async def needs_refresh(self, interval: float, timeout: float = 0.1) -> bool:
-        if not await self.client.not_refreshing.wait(timeout):
+    def needs_refresh(self, interval: float, timeout: float = 0.1) -> bool:
+        if not self.client.not_refreshing.wait(timeout):
             return False
         elif self._needs_update:
             return True

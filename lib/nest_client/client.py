@@ -8,9 +8,10 @@ import json
 import logging
 import pickle
 import time
-from asyncio import Lock, Event, get_running_loop
+from asyncio import Lock, get_running_loop
 from contextlib import asynccontextmanager
 from datetime import datetime
+from threading import Event
 from typing import Union, Optional, Mapping, Iterable, Any, AsyncContextManager
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
