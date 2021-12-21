@@ -66,6 +66,7 @@ class ThermostatDevice(Device, type='device', parent_type=None, key='hvac_wires'
     schedule_mode = NestProperty('current_schedule_mode')
     humidity = NestProperty('current_humidity')
     fan_current_speed = NestProperty('fan_current_speed')
+    leaf = NestProperty('leaf')  # type: bool
     is_thermostat: bool = True
 
     @cached_property
