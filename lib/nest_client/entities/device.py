@@ -40,7 +40,7 @@ class Device(NestObject, type='device', parent_type=None):
         return next((st for st in structures.values() if self.key in st.device_ids), None)
 
     async def get_shared(self) -> Optional['Shared']:
-        children = await self.children
+        children = await self.get_children()
         return children.get('shared')
 
     async def dev_shared_tuple(self: 'NestDevice') -> tuple['NestDevice', Optional['Shared']]:

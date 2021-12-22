@@ -8,8 +8,6 @@ import logging
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any, Union
 
-from async_property import async_cached_property
-
 from .base import NestObject, NestProperty
 
 if TYPE_CHECKING:
@@ -26,13 +24,11 @@ class User(NestObject, type='user', parent_type=None):
     def __repr__(self) -> str:
         return f'<{self.__class__.__name__}[{self.serial}, name={self.name!r}]>'
 
-    @async_cached_property
-    async def structures(self) -> dict[str, 'Structure']:
+    async def get_structures(self) -> dict[str, 'Structure']:
         structures = await self.client.get_structures()
         return {did: structures[did] for did in self.value['structures']}
 
-    @async_cached_property
-    async def structure_memberships(self) -> dict['Structure', dict[str, Any]]:
+    async def get_structure_memberships(self) -> dict['Structure', dict[str, Any]]:
         structures = await self.client.get_structures()
         return {structures[member['structure']]: member for member in self.value['structure_memberships']}
 

@@ -15,7 +15,6 @@ from typing import Union, Optional, Mapping, Iterable, Any, AsyncContextManager
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
-from async_property import async_cached_property
 from httpx import HTTPError, TimeoutException, HTTPStatusError
 
 from requests_client.async_client import AsyncRequestsClient
@@ -255,26 +254,6 @@ class NestWebClient:
     async def get_shareds(self, cached: bool = True) -> dict[str, Shared]:
         return await self.get_objects(['shared'], cached)
 
-    @async_cached_property
-    async def devices(self) -> tuple[NestDevice]:
-        devices = await self.get_devices()
-        return tuple(devices.values())
-
-    @async_cached_property
-    async def structures(self) -> tuple[Structure]:
-        structures = await self.get_structures()
-        return tuple(structures.values())
-
-    @async_cached_property
-    async def users(self) -> tuple[User]:
-        users = await self.get_users()
-        return tuple(users.values())
-
-    @async_cached_property
-    async def shared(self) -> tuple[Shared]:
-        shared = await self.get_shareds()
-        return tuple(shared.values())
-
     # endregion
 
     # region Refresh Methods
@@ -304,7 +283,7 @@ class NestWebClient:
             if subscribe:
                 objects = set(objects)
                 if children:
-                    children_groups = await gather(*(obj.children for obj in objects))
+                    children_groups = await gather(*(obj.get_children() for obj in objects))
                     objects.update(c for group in children_groups for c in group.values())
                     # for obj in tuple(objects):
                     #     objects.update((await obj.children).values())  # noqa

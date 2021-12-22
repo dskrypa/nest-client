@@ -9,8 +9,6 @@ from datetime import datetime
 from threading import RLock
 from typing import TYPE_CHECKING, Any, Union, Optional, TypeVar, Type, Callable
 
-from async_property import async_cached_property
-
 from ..constants import BUCKET_CHILD_TYPES
 from ..exceptions import NestObjectNotFound, DictAttrFieldNotFoundError
 from ..utils import ClearableCachedProperty, ClearableCachedPropertyMixin, cached_classproperty, celsius_to_fahrenheit
@@ -210,8 +208,7 @@ class NestObject(ClearableCachedPropertyMixin):
             return tuple(t for t, fetch in child_types.items() if fetch)
         return ()
 
-    @async_cached_property
-    async def children(self) -> dict[str, NestObj]:
+    async def get_children(self) -> dict[str, NestObj]:
         """Mapping of {type: NestObject} for this object's children"""
         if fetch_child_types := self.fetch_child_types:
             key_obj_map = await self.client.get_objects(fetch_child_types)
@@ -219,15 +216,6 @@ class NestObject(ClearableCachedPropertyMixin):
         return {}
 
     async def get_parent(self) -> Optional[NestObj]:
-        if self.parent_type:
-            try:
-                return await self.client.get_object(self.parent_type, self.serial)
-            except NestObjectNotFound:
-                return None
-        return None
-
-    @async_cached_property
-    async def parent(self) -> Optional[NestObj]:
         if self.parent_type:
             try:
                 return await self.client.get_object(self.parent_type, self.serial)

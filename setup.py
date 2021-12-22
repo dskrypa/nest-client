@@ -5,14 +5,9 @@ from pathlib import Path
 from setuptools import setup, find_packages
 
 project_root = Path(__file__).resolve().parent
-
-with project_root.joinpath('readme.rst').open('r', encoding='utf-8') as f:
-    long_description = f.read()
-
+long_description = project_root.joinpath('readme.rst').read_text('utf-8')
 about = {}
-with project_root.joinpath('lib', 'nest_client', '__version__.py').open('r', encoding='utf-8') as f:
-    exec(f.read(), about)
-
+exec(project_root.joinpath('lib', 'nest_client', '__version__.py').read_text('utf-8'), about)
 
 optional_dependencies = {
     'dev': [                                            # Development env requirements
@@ -30,7 +25,6 @@ requirements = [
     'colored',
     'pyyaml',
     'tzdata',
-    'async_property',
 ]
 
 
