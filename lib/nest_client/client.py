@@ -8,16 +8,15 @@ import json
 import logging
 import pickle
 import time
-from asyncio import Lock, get_running_loop
+from asyncio import Lock, get_running_loop, gather
 from contextlib import asynccontextmanager
 from datetime import datetime
-from threading import Event
 from typing import Union, Optional, Mapping, Iterable, Any, AsyncContextManager
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 from async_property import async_cached_property
-from httpx import HTTPError
+from httpx import HTTPError, TimeoutException, HTTPStatusError
 
 from requests_client.async_client import AsyncRequestsClient
 from requests_client.user_agent import USER_AGENT_CHROME
@@ -46,8 +45,6 @@ class NestWebClient:
         )
         self.auth = NestWebAuth(self.config, self._client, reauth)
         self._known_objects: dict[str, NestObj] = {}
-        self.not_refreshing = Event()  # cleared while a refresh is pending
-        self.not_refreshing.set()
         self._latest_transport_url = None
         self._latest_weather = None
         self._last_known_reauth = datetime.now()
@@ -62,8 +59,8 @@ class NestWebClient:
 
     @asynccontextmanager
     async def transport_url(self) -> AsyncContextManager[AsyncRequestsClient]:
+        host_port = await self._transport_host_port()  # Must be outside of with to prevent deadlock if update is needed
         async with self.auth:
-            host_port = await self._transport_host_port()
             log.debug('Using host:port={}:{}'.format(*host_port))
             self._client.host, self._client.port = host_port
             yield self._client
@@ -75,7 +72,7 @@ class NestWebClient:
             self._client.host, self._client.port = self._nest_host_port
             yield self._client
 
-    async def _transport_host_port(self) -> tuple[str, int | None]:
+    async def _transport_host_port(self) -> tuple[str, Optional[int]]:
         if self._needs_transport_url_update():
             await self.app_launch()
         return self._latest_transport_url.hostname, self._latest_transport_url.port
@@ -88,25 +85,34 @@ class NestWebClient:
     # region Low Level Methods
 
     async def app_launch(self, bucket_types: Iterable[str] = None, timeout: float = None) -> dict[str, Any]:
+        bucket_types = list(bucket_types) if bucket_types else []
+        payload = {'known_bucket_types': bucket_types, 'known_bucket_versions': []}
         async with self.nest_url() as client:
-            bucket_types = list(bucket_types) if bucket_types else []
-            payload = {'known_bucket_types': bucket_types, 'known_bucket_versions': []}
             user_id = await self.user_id()
-            resp = (await client.post(f'api/0.1/user/{user_id}/app_launch', json=payload, timeout=timeout)).json()
+            try:
+                resp = await client.post(f'api/0.1/user/{user_id}/app_launch', json=payload, timeout=timeout)
+            except HTTPStatusError as e:
+                if e.response.status_code in (401, 403):
+                    self.auth.force_reauth = True
+                raise
+
+            data = resp.json()
             if self._needs_transport_url_update():
-                self._latest_weather = resp['weather_for_structures']
-                self._latest_transport_url = urlparse(resp['service_urls']['urls']['transport_url'])
+                self._latest_weather = data['weather_for_structures']
+                self._latest_transport_url = urlparse(data['service_urls']['urls']['transport_url'])
                 self._last_known_reauth = self.auth.last_reauth
-            return resp
+            return data
 
     async def get_buckets(self, types: Iterable[str], timeout: float = None) -> list[NestObjectDict]:
-        return (await self.app_launch(types, timeout))['updated_buckets']
+        data = await self.app_launch(types, timeout)
+        return data['updated_buckets']
 
     async def get_mobile_info(self) -> dict[str, Any]:
         """Returns the same info as app_launch, but in a slightly different format"""
         async with self.transport_url() as client:
             user_id = await self.user_id()
-            return (await client.get(f'v2/mobile/user.{user_id}')).json()
+            resp = await client.get(f'v2/mobile/user.{user_id}')
+            return resp.json()
 
     async def get_weather_location(self) -> tuple[str, str]:
         if self._latest_weather is None:
@@ -141,7 +147,8 @@ class NestWebClient:
 
         country_code = country_code or 'US'
         async with self.nest_url() as client:
-            return (await client.get(f'api/0.1/weather/forecast/{zip_code},{country_code}')).json()
+            resp = await client.get(f'api/0.1/weather/forecast/{zip_code},{country_code}')
+            return resp.json()
 
     # endregion
 
@@ -254,19 +261,23 @@ class NestWebClient:
 
     @async_cached_property
     async def devices(self) -> tuple[NestDevice]:
-        return tuple((await self.get_devices()).values())
+        devices = await self.get_devices()
+        return tuple(devices.values())
 
     @async_cached_property
     async def structures(self) -> tuple[Structure]:
-        return tuple((await self.get_structures()).values())
+        structures = await self.get_structures()
+        return tuple(structures.values())
 
     @async_cached_property
     async def users(self) -> tuple[User]:
-        return tuple((await self.get_users()).values())
+        users = await self.get_users()
+        return tuple(users.values())
 
     @async_cached_property
     async def shared(self) -> tuple[Shared]:
-        return tuple((await self.get_shareds()).values())
+        shared = await self.get_shareds()
+        return tuple(shared.values())
 
     # endregion
 
@@ -275,9 +286,9 @@ class NestWebClient:
     async def subscribe(
         self, objects: Iterable[NestObj], send_meta: bool = True, timeout: float = 5
     ) -> list[NestObjectDict]:
+        payload = {'objects': [obj.subscribe_dict(send_meta) for obj in objects], 'timeout': 863}
+        log.debug(f'Submitting subscribe request with {payload=}')
         async with self.transport_url() as client:
-            payload = {'objects': [obj.subscribe_dict(send_meta) for obj in objects], 'timeout': 863}
-            log.debug(f'Submitting subscribe request with {payload=}')
             resp = await client.post('v5/subscribe', json=payload, timeout=timeout)
             return resp.json()['objects']
 
@@ -293,31 +304,31 @@ class NestWebClient:
         timeout: float = None,
         children: bool = True,
     ):
-        self.not_refreshing.clear()
-        try:
-            await self._refresh_objects(objects, subscribe, send_meta, timeout=timeout, children=children)
-        finally:
-            self.not_refreshing.set()
-
-    async def _refresh_objects(
-        self,
-        objects: Iterable[NestObj],
-        subscribe: bool = True,
-        send_meta: bool = True,
-        *,
-        timeout: float = None,
-        children: bool = True,
-    ):
         try:
             if subscribe:
                 objects = set(objects)
                 if children:
-                    for obj in tuple(objects):
-                        objects.update((await obj.children).values())  # noqa
+                    children_groups = await gather(*(obj.children for obj in objects))
+                    objects.update(c for group in children_groups for c in group.values())
+                    # for obj in tuple(objects):
+                    #     objects.update((await obj.children).values())  # noqa
                 raw_objs = await self.subscribe(objects, send_meta, timeout or 5)
             else:
                 types = {obj.type for obj in objects}
                 raw_objs = await self.get_buckets(_expand_with_children(types) if children else types, timeout=timeout)
+        except TimeoutException:
+            log.debug('Refresh subscribe request timed out')
+        except HTTPStatusError as e:
+            resp = e.response
+            if (code := resp.status_code) == 429:
+                retry_after = resp.headers.get('Retry-After')
+                reason = f'rate limit - {retry_after=}'
+            elif code in (401, 403):
+                reason = f'unauthorized ({code})'
+                self.auth.force_reauth = True
+            else:
+                reason = f'error [{code}]'
+            log.debug(f'Refresh failed due to {reason}: {e}')
         except HTTPError as e:
             log.debug(f'Refresh failed due to error: {e}')
         else:
@@ -326,7 +337,8 @@ class NestWebClient:
                 if obj := self._known_objects.get(key):
                     obj._refresh(raw_obj)
                 else:
-                    self._known_objects[key] = NestObject.from_dict(raw_obj, self)
+                    self._known_objects[key] = obj = NestObject.from_dict(raw_obj, self)
+                    log.debug(f'Found new {obj=} during refresh')
 
     # endregion
 

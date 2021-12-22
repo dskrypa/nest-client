@@ -138,12 +138,8 @@ class NestObject(ClearableCachedPropertyMixin):
 
     # region Refresh Status Methods
 
-    def needs_refresh(self, interval: float, timeout: float = 0.1) -> bool:
-        if not self.client.not_refreshing.wait(timeout):
-            return False
-        elif self._needs_update:
-            return True
-        return (datetime.now() - self._refreshed).total_seconds() >= interval
+    def needs_refresh(self, interval: float) -> bool:
+        return self._needs_update or (datetime.now() - self._refreshed).total_seconds() >= interval
 
     def subscribe_dict(self, meta: bool = True) -> dict[str, Union[str, int, None]]:
         if meta:
@@ -173,6 +169,7 @@ class NestObject(ClearableCachedPropertyMixin):
             log.warning(f'Could not refresh {self} via {source} - received unexpected {keys=}')
 
     def _refresh(self, obj_dict: NestObjectDict):
+        log.debug(f'Received update for {self}')
         self.clear_cached_properties()
         self.revision = obj_dict['object_revision']
         self.timestamp = obj_dict['object_timestamp']
