@@ -7,7 +7,7 @@ Classes that represent Nest Devices/Thermostats and related information.
 import logging
 import time
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, Type
 
 from async_property import async_cached_property
 
@@ -45,8 +45,12 @@ class Device(NestObject, type='device', parent_type=None):
     async def shared(self) -> Optional['Shared']:
         return (await self.children).get('shared')
 
+    async def dev_shared_tuple(self: Type['NestDevice']) -> tuple['NestDevice', Optional['Shared']]:
+        shared = await self.shared
+        return self, shared  # noqa
+
     @cached_property
-    def where(self) -> str | None:
+    def where(self) -> Optional[str]:
         return NEST_WHERE_MAP.get(self.where_id)
 
     @cached_property
