@@ -41,7 +41,9 @@ class NestWebClient:
 
     def __init__(self, config_path: str = None, reauth: bool = False, overrides: Mapping[str, Optional[str]] = None):
         self.config = NestConfig(config_path, overrides)
-        self._client = AsyncRequestsClient(NEST_URL, user_agent_fmt=USER_AGENT_CHROME, headers={'Referer': NEST_URL})
+        self._client = AsyncRequestsClient(
+            NEST_URL, user_agent_fmt=USER_AGENT_CHROME, headers={'Referer': NEST_URL}, log_data=True
+        )
         self.auth = NestWebAuth(self.config, self._client, reauth)
         self._known_objects: dict[str, NestObj] = {}
         self.not_refreshing = Event()  # cleared while a refresh is pending
@@ -147,7 +149,7 @@ class NestWebClient:
 
     @async_cached_property
     async def objects(self) -> dict[str, NestObj]:
-        return await self.get_objects(INIT_BUCKET_TYPES, False)
+        return await self.get_init_objects()
 
     @async_cached_property
     async def parent_objects(self) -> dict[str, NestObj]:
@@ -218,6 +220,9 @@ class NestWebClient:
                     raise NestObjectNotFound(f'No {desc} objects were found from {self}')
                 else:
                     raise ValueError(f'A serial number is required - found {ko_count} {desc} objects: {list(obj_dict)}')
+
+    async def get_init_objects(self) -> dict[str, NestObj]:
+        return await self.get_objects(INIT_BUCKET_TYPES, False)
 
     # endregion
 
@@ -399,8 +404,9 @@ class NestWebAuth:
                 session.cookies.jar.set_cookie(cookie)
 
         if save:
-            loop = get_running_loop()
-            await loop.run_in_executor(None, self._save_session, expiry, userid, jwt_token, list(session.cookies.jar))
+            self._save_session(expiry, userid, jwt_token, list(session.cookies.jar))
+            # loop = get_running_loop()
+            # await loop.run_in_executor(None, self._save_session, expiry, userid, jwt_token, list(session.cookies.jar))
 
     def _save_session(self, expiry: datetime, userid: str, jwt_token: str, cookies):
         if not self.cache_path.parent.exists():
