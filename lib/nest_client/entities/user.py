@@ -28,15 +28,13 @@ class User(NestObject, type='user', parent_type=None):
 
     @async_cached_property
     async def structures(self) -> dict[str, 'Structure']:
-        return {did: (await self.client.objects)[did] for did in self.value['structures']}
+        structures = await self.client.get_structures()
+        return {did: structures[did] for did in self.value['structures']}
 
     @async_cached_property
     async def structure_memberships(self) -> dict['Structure', dict[str, Any]]:
-        members = {}
-        for member in self.value['structure_memberships']:
-            user = (await self.client.objects)[member['structure']]
-            members[user] = member
-        return members  # noqa
+        structures = await self.client.get_structures()
+        return {structures[member['structure']]: member for member in self.value['structure_memberships']}
 
 
 class Messages(NestObject, type='message_center', parent_type='user'):
@@ -46,9 +44,10 @@ class Messages(NestObject, type='message_center', parent_type='user'):
 
 class Buckets(NestObject, type='buckets', parent_type='user'):
     async def types_by_parent(self) -> dict[NestObject, set[str]]:
+        parent_objs = await self.client.get_init_parent_objects()
         types = defaultdict(set)
         for bucket in self.value['buckets']:
             bucket_type, serial = bucket.split('.', 1)
-            parent = (await self.client.parent_objects)[serial]
+            parent = parent_objs[serial]
             types[parent].add(bucket_type)
         return types

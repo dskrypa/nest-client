@@ -59,7 +59,7 @@ class NestConfig:
         new_value: str = None,
         save: bool = False,
         required: bool = False,
-    ) -> str | None:
+    ) -> Optional[str]:
         name = name or key
         try:
             cfg_value = self._data.get(section, key)

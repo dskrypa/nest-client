@@ -218,6 +218,14 @@ class NestObject(ClearableCachedPropertyMixin):
             return {obj.type: obj for obj in key_obj_map.values() if obj.serial == self.serial}
         return {}
 
+    async def get_parent(self) -> Optional[NestObj]:
+        if self.parent_type:
+            try:
+                return await self.client.get_object(self.parent_type, self.serial)
+            except NestObjectNotFound:
+                return None
+        return None
+
     @async_cached_property
     async def parent(self) -> Optional[NestObj]:
         if self.parent_type:

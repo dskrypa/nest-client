@@ -156,7 +156,7 @@ async def control_thermostat(nest: 'NestWebClient', action: str, args):
         else:
             raise ValueError(f'Unexpected {args.state=!r}')
     else:
-        shared = await thermostat.shared
+        shared = await thermostat.get_shared()
         if action == 'temp':
             if args.only_set:
                 await shared.set_temp(args.temp)
@@ -187,7 +187,8 @@ async def show_status(nest: 'NestWebClient', details: bool, out_fmt: str):
 
     device = await ThermostatDevice.find(nest)
     if details:
-        status = {'device': device.value, 'shared': device.shared.value}
+        shared = await device.get_shared()
+        status = {'device': device.value, 'shared': shared.value}
         if nest.config.temp_unit == 'f':
             _convert_temp_values(status)
         Printer(out_fmt).pprint(status)
@@ -204,7 +205,7 @@ async def show_status(nest: 'NestWebClient', details: bool, out_fmt: str):
             fix_ansi_width=True,
         )
 
-        shared = await device.shared
+        shared = await device.get_shared()
         current = shared.current_temperature
         target = shared.target_temperature
         target_lo, target_hi = shared.target_temp_range

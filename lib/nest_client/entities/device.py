@@ -7,9 +7,7 @@ Classes that represent Nest Devices/Thermostats and related information.
 import logging
 import time
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, Optional, Type
-
-from async_property import async_cached_property
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ..constants import TARGET_TEMP_TYPES, NEST_WHERE_MAP, ALLOWED_TEMPS
 from ..utils import format_duration, fahrenheit_to_celsius as f2c
@@ -37,17 +35,17 @@ class Device(NestObject, type='device', parent_type=None):
     def __repr__(self) -> str:
         return f'<{self.__class__.__name__}[{self.serial}, name={self.name!r}, model={self.model_version!r}]>'
 
-    @async_cached_property
-    async def structure(self) -> Optional['Structure']:
-        return next((st for st in (await self.client.get_structures()).values() if self.key in st.devices), None)
+    async def get_structure(self) -> Optional['Structure']:
+        structures = await self.client.get_structures()
+        return next((st for st in structures.values() if self.key in st.device_ids), None)
 
-    @async_cached_property
-    async def shared(self) -> Optional['Shared']:
-        return (await self.children).get('shared')
+    async def get_shared(self) -> Optional['Shared']:
+        children = await self.children
+        return children.get('shared')
 
-    async def dev_shared_tuple(self: Type['NestDevice']) -> tuple['NestDevice', Optional['Shared']]:
-        shared = await self.shared
-        return self, shared  # noqa
+    async def dev_shared_tuple(self: 'NestDevice') -> tuple['NestDevice', Optional['Shared']]:
+        shared = await self.get_shared()
+        return self, shared
 
     @cached_property
     def where(self) -> Optional[str]:
@@ -78,7 +76,7 @@ class ThermostatDevice(Device, type='device', parent_type=None, key='hvac_wires'
         return {k[4:]: v for k, v in self.value.items() if k.startswith('has_')}
 
     @cached_property
-    def fan(self) -> dict[str, str | bool | int]:
+    def fan(self) -> dict[str, Union[str, bool, int]]:
         return {k[4:]: v for k, v in self.value.items() if k.startswith('fan_')}
 
     async def start_fan(self, duration: int = 1800) -> 'Response':
@@ -220,7 +218,7 @@ class EnergyUsageDay:
     recent_avg_used = NestProperty('recent_avg_used')  # type: int
     usage_over_avg = NestProperty('usage_over_avg')  # type: int
     cycles = NestProperty('cycles')  # type: list[dict[str, int]]
-    events = NestProperty('events')  # type: list[dict[str, str | int | float | bool]]
+    events = NestProperty('events')  # type: list[dict[str, Union[str, int, float, bool]]]
     rates = NestProperty('rates')  # type: list[dict[str, Any]]
     system_capabilities = NestProperty('system_capabilities')  # type: int
     incomplete_fields = NestProperty('incomplete_fields')  # type: int
@@ -230,4 +228,4 @@ class EnergyUsageDay:
         self.value = value
 
 
-NestDevice = Device | ThermostatDevice
+NestDevice = Union[Device, ThermostatDevice]

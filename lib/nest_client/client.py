@@ -154,14 +154,6 @@ class NestWebClient:
 
     # region High Level Object Methods
 
-    @async_cached_property
-    async def objects(self) -> dict[str, NestObj]:
-        return await self.get_init_objects()
-
-    @async_cached_property
-    async def parent_objects(self) -> dict[str, NestObj]:
-        return {obj.serial: obj for obj in (await self.objects).values() if obj.parent_type is None}
-
     async def get_objects(self, types: Iterable[str], cached: bool = True, children: bool = True) -> dict[str, NestObj]:
         types = set(types)
         if cached and (obj_dict := {k: v for k, v in self._known_objects.items() if v.type in types}):
@@ -228,8 +220,12 @@ class NestWebClient:
                 else:
                     raise ValueError(f'A serial number is required - found {ko_count} {desc} objects: {list(obj_dict)}')
 
-    async def get_init_objects(self) -> dict[str, NestObj]:
-        return await self.get_objects(INIT_BUCKET_TYPES, False)
+    async def get_init_objects(self, cached: bool = False) -> dict[str, NestObj]:
+        return await self.get_objects(INIT_BUCKET_TYPES, cached)
+
+    async def get_init_parent_objects(self, cached: bool = True) -> dict[str, NestObj]:
+        init_objects = await self.get_init_objects(cached)
+        return {obj.serial: obj for obj in init_objects.values() if obj.parent_type is None}
 
     # endregion
 
