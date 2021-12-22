@@ -6,7 +6,7 @@ Classes that represent Nest Structures, Users, Devices/Thermostats, etc.
 
 import logging
 from asyncio import gather
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Optional
 
 from async_property import async_cached_property
 
@@ -51,7 +51,7 @@ class Structure(NestObject, type='structure', parent_type=None):
         dev_keys = set(self.value['devices'])
         return {dev_key: dev for dev_key, dev in (await self.client.get_devices()).items() if dev_key in dev_keys}
 
-    async def devices_and_shared(self) -> dict[str, tuple['Device', 'Shared' | None]]:
+    async def devices_and_shared(self) -> dict[str, tuple['Device', Optional['Shared']]]:
         dev_keys = set(self.value['devices'])
         devices = await self.client.get_devices()
         filtered = [dev for dev_key, dev in devices.items() if dev_key in dev_keys]
@@ -62,7 +62,7 @@ class Structure(NestObject, type='structure', parent_type=None):
     async def thermostats(self) -> tuple['ThermostatDevice']:
         return tuple(dev for dev in (await self.devices).values() if isinstance(dev, ThermostatDevice))
 
-    async def thermostats_and_shared(self) -> tuple[tuple['ThermostatDevice', 'Shared' | None]]:
+    async def thermostats_and_shared(self) -> tuple[tuple['ThermostatDevice', Optional['Shared']]]:
         devices_and_shared = await self.devices_and_shared()
         return tuple((dev, shared) for dev, shared in devices_and_shared.values() if isinstance(dev, ThermostatDevice))
 
