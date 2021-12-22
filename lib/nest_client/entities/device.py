@@ -139,13 +139,14 @@ class Shared(NestObject, type='shared', parent_type='device'):
     def target_temp_range(self) -> tuple[float, float]:
         return self.target_temperature_low, self.target_temperature_high
 
-    async def set_temp_range(self, low: float, high: float) -> 'Response':
+    async def set_temp_range(self, low: float, high: float, convert: bool = True) -> 'Response':
         """
         :param low: Minimum temperature to maintain in Celsius (heat will turn on if the temp drops below this)
         :param high: Maximum temperature to allow in Celsius (air conditioning will turn on above this)
+        :param convert: Whether the given temperatures should be converted from fahrenheit to celsius if f is configured
         :return: The raw response
         """
-        if self.config.temp_unit == 'f':
+        if convert and self.config.temp_unit == 'f':
             low = f2c(low)
             high = f2c(high)
         return await self._set_full({'target_temperature_low': low, 'target_temperature_high': high})
