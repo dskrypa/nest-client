@@ -285,8 +285,6 @@ class NestWebClient:
                 if children:
                     children_groups = await gather(*(obj.get_children() for obj in objects))
                     objects.update(c for group in children_groups for c in group.values())
-                    # for obj in tuple(objects):
-                    #     objects.update((await obj.children).values())  # noqa
                 raw_objs = await self.subscribe(objects, send_meta, timeout or 5)
             else:
                 types = {obj.type for obj in objects}
