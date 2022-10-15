@@ -4,6 +4,8 @@ Utilities for parsing and interpreting crontab schedules
 :author: Doug Skrypa
 """
 
+from __future__ import annotations
+
 import logging
 from datetime import datetime
 from functools import cached_property
@@ -21,7 +23,9 @@ Bool = Union[bool, Any]
 
 
 class TimePart:
-    def __init__(self, cron: 'CronSchedule', name: str, intervals: int, min: int = 0, special: str = None):
+    __slots__ = ('cron', 'name', 'min', 'arr', 'special_keys', 'special_vals')
+
+    def __init__(self, cron: CronSchedule, name: str, intervals: int, min: int = 0, special: str = None):  # noqa
         self.cron = cron
         self.name = name
         try:
@@ -112,7 +116,7 @@ class TimePart:
         collapsed = self._collapse_ranges()
         return f'{collapsed},L' if last else collapsed
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f'<{self.__class__.__name__}[{self.name}: {self}]>'
 
     def all(self) -> bool:
@@ -215,12 +219,14 @@ class TimePart:
 
 
 class CronPart:
-    def __init__(self, intervals: int, min: int = 0, special: str = None):
+    __slots__ = ('intervals', 'min', 'special', 'name')
+
+    def __init__(self, intervals: int, min: int = 0, special: str = None):  # noqa
         self.intervals = intervals
         self.min = min
         self.special = special
 
-    def __set_name__(self, owner, name):
+    def __set_name__(self, owner, name: str):
         self.name = name
 
     def _get(self, instance) -> TimePart:
@@ -251,10 +257,10 @@ class CronSchedule:
     def __init__(self, start: datetime = None):
         self._start = start
 
-    def __str__(self):
+    def __str__(self) -> str:
         return ' '.join(map(str, (self.second, self.minute, self.hour, self.day, self.month, self.dow)))
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f'<{self.__class__.__name__}[{self}]>'
 
     def _set_time(self, dt_obj: datetime):
@@ -264,7 +270,7 @@ class CronSchedule:
             self.hour.replace(dt_obj.hour, True)
 
     @classmethod
-    def from_cron(cls, cron_str: str) -> 'CronSchedule':
+    def from_cron(cls, cron_str: str) -> CronSchedule:
         self = cls()
         attrs = (self.second, self.minute, self.hour, self.day, self.month, self.dow)
         for attr, value in zip(attrs, cron_str.split()):
@@ -287,7 +293,7 @@ class CronSchedule:
 
 class NestCronSchedule(CronSchedule):
     @classmethod
-    def from_cron(cls, cron_str: str) -> 'NestCronSchedule':
+    def from_cron(cls, cron_str: str) -> NestCronSchedule:
         cron = super().from_cron(cron_str)
         if attr := next((attr for attr in ('day', 'month', 'week') if not getattr(cron, attr).all()), None):
             bad = getattr(cron, attr)
@@ -296,7 +302,7 @@ class NestCronSchedule(CronSchedule):
 
     def __iter__(self) -> Iterator[tuple[int, int]]:
         """
-        :return iterator: Iterator that yields tuples of (day of week, time of day [seconds])
+        :return: Iterator that yields 2-tuples of (day of week, time of day [seconds])
         """
         for dow in self.dow:
             for hour in self.hour:

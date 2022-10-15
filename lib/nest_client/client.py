@@ -434,7 +434,7 @@ class NestWebAuth:
         resp = (await session.post(JWT_URL, params=params, headers=headers)).json()
         log.log(9, 'Initialized session; response: {}'.format(json.dumps(resp, indent=4, sort_keys=True)))
         claims = resp['claims']
-        expiry = datetime.strptime(claims['expirationTime'], '%Y-%m-%dT%H:%M:%S.%fZ')
+        expiry = _parse_datetime(claims['expirationTime'])
         await self._register_session(expiry, claims['subject']['nestId']['id'], resp['jwt'], save=True)
         log.debug(f'Initialized session for user={self._user_id!r} with expiry={self._localize(expiry)}')
 
@@ -465,3 +465,12 @@ def _type_not_found_description(obj_type: str, sub_type_key: str) -> str:
             return f'{obj_type=} with sub-type key={sub_type_key!r}'
     else:
         return f'{obj_type=}'
+
+
+def _parse_datetime(dt_str: str) -> datetime:
+    for dt_format in ('%Y-%m-%dT%H:%M:%S.%fZ', '%Y-%m-%dT%H:%M:%SZ'):
+        try:
+            return datetime.strptime(dt_str, dt_format)
+        except ValueError:
+            pass
+    raise ValueError(f'Could not parse dt_str={dt_str!r} using any configured datetime format')

@@ -1,7 +1,7 @@
 __title__ = 'nest-client'
 __description__ = 'Nest Web Client'
 __url__ = 'https://github.com/dskrypa/nest-client'
-__version__ = '2022.05.10'
+__version__ = '2022.10.15'
 __author__ = 'Doug Skrypa'
 __author_email__ = 'dskrypa@gmail.com'
 __copyright__ = 'Copyright 2021 Doug Skrypa'
