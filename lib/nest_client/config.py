@@ -46,6 +46,7 @@ class NestConfig:
         if self.path.exists():
             with self.path.open('r', encoding='utf-8') as f:
                 config.read_file(f)
+            log.debug(f'Loaded config from {self.path.as_posix()}')
         return config
 
     def __contains__(self, key: str) -> bool:

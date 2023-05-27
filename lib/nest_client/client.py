@@ -22,7 +22,7 @@ from requests_client.user_agent import USER_AGENT_CHROME
 
 from .utils import get_user_cache_dir
 from .config import NestConfig
-from .constants import JWT_URL, NEST_API_KEY, NEST_URL, OAUTH_URL,INIT_BUCKET_TYPES
+from .constants import JWT_URL, NEST_API_KEY, NEST_URL, OAUTH_URL, INIT_BUCKET_TYPES
 from .exceptions import SessionExpired, ConfigError, NestObjectNotFound
 from .entities.base import NestObjectDict, NestObject, NestObj
 from .entities.device import NestDevice, Device, Shared
@@ -58,17 +58,18 @@ class NestWebClient:
 
     @asynccontextmanager
     async def transport_url(self) -> AsyncContextManager[AsyncRequestsClient]:
-        host_port = await self._transport_host_port()  # Must be outside of with to prevent deadlock if update is needed
+        host, port = await self._transport_host_port()  # Must be outside `with` to prevent deadlock if update is needed
         async with self.auth:
-            log.debug('Using host:port={}:{}'.format(*host_port))
-            self._client.host, self._client.port = host_port
+            log.debug(f'Using host:port={host}:{port}')
+            self._client.host, self._client.port = host, port
             yield self._client
 
     @asynccontextmanager
     async def nest_url(self) -> AsyncContextManager[AsyncRequestsClient]:
         async with self.auth:
-            log.debug('Using host:port={}:{}'.format(*self._nest_host_port))
-            self._client.host, self._client.port = self._nest_host_port
+            host, port = self._nest_host_port
+            log.debug(f'Using host:port={host}:{port}')
+            self._client.host, self._client.port = host, port
             yield self._client
 
     async def _transport_host_port(self) -> tuple[str, Optional[int]]:
@@ -168,7 +169,7 @@ class NestWebClient:
 
         log.debug(f'Requesting buckets for {types=}')
         obj_dict = {obj['object_key']: NestObject.from_dict(obj, self) for obj in (await self.get_buckets(types))}
-        log.debug('Found new objects: {}'.format(', '.join(sorted(obj_dict))))
+        log.debug('Found new objects: ' + ', '.join(sorted(obj_dict)))
         self._known_objects.update(obj_dict)
         if children and orig_types != types:
             obj_dict = {key: obj for key, obj in obj_dict.items() if obj.type in orig_types}
@@ -418,8 +419,12 @@ class NestWebAuth:
         }
         session = await self._client.get_session()
         resp = (await session.get(OAUTH_URL, params=params, headers=headers)).json()
-        log.log(9, 'Received OAuth response: {}'.format(json.dumps(resp, indent=4, sort_keys=True)))
-        return resp['access_token']
+        resp_str = json.dumps(resp, indent=4, sort_keys=True)
+        log.log(9, f'Received OAuth response: {resp_str}')
+        try:
+            return resp['access_token']
+        except KeyError as e:
+            raise RuntimeError(f'No access_token was found in the oauth response: {resp_str}') from e
 
     async def _login_via_google(self):
         token = await self._get_oauth_token()
@@ -432,7 +437,7 @@ class NestWebAuth:
         }
         session = await self._client.get_session()
         resp = (await session.post(JWT_URL, params=params, headers=headers)).json()
-        log.log(9, 'Initialized session; response: {}'.format(json.dumps(resp, indent=4, sort_keys=True)))
+        log.log(9, f'Initialized session; response: {json.dumps(resp, indent=4, sort_keys=True)}')
         claims = resp['claims']
         expiry = _parse_datetime(claims['expirationTime'])
         await self._register_session(expiry, claims['subject']['nestId']['id'], resp['jwt'], save=True)
@@ -473,4 +478,4 @@ def _parse_datetime(dt_str: str) -> datetime:
             return datetime.strptime(dt_str, dt_format)
         except ValueError:
             pass
-    raise ValueError(f'Could not parse dt_str={dt_str!r} using any configured datetime format')
+    raise ValueError(f'Could not parse {dt_str=} using any configured datetime format')

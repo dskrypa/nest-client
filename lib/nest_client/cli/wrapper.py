@@ -62,7 +62,7 @@ def wrap_main(main):
             """
             try:
                 sys.stdout.close()
-            except Exception:
+            except Exception:  # noqa
                 pass
     return run_main
 

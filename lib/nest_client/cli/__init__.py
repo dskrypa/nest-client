@@ -2,11 +2,13 @@
 :author: Doug Skrypa
 """
 
+from __future__ import annotations
+
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..__version__ import __author_email__, __version__
+from ..__version__ import __author_email__, __version__  # noqa
 from ..output import Printer, Table, SimpleColumn, colored, cdiff
 from .argparser import ArgParser
 from .wrapper import wrap_main
@@ -20,34 +22,34 @@ SHOW_ITEMS = ('energy', 'weather', 'buckets', 'bucket_names', 'schedule')
 
 
 def parser():
-    parser = ArgParser(description='Nest Thermostat Manager')
+    _parser = ArgParser(description='Nest Thermostat Manager')
 
-    status_parser = parser.add_subparser('action', 'status', 'Show current status')
+    status_parser = _parser.add_subparser('action', 'status', 'Show current status')
     status_parser.add_argument('--format', '-f', default='yaml', choices=Printer.formats, help='Output format')
     status_parser.add_argument('--details', '-d', action='store_true', help='Show more detailed information')
 
-    temp_parser = parser.add_subparser('action', 'temp', 'Set a new temperature')
+    temp_parser = _parser.add_subparser('action', 'temp', 'Set a new temperature')
     temp_parser.add_argument('temp', type=float, help='The temperature to set')
     temp_parser.add_argument('--only_set', '-s', action='store_true', help='Only set the temperature - do not force it to run if the delta is < 0.5 degrees')
 
-    range_parser = parser.add_subparser('action', 'range', 'Set a new temperature range')
+    range_parser = _parser.add_subparser('action', 'range', 'Set a new temperature range')
     range_parser.add_argument('low', type=float, help='The low temperature to set')
     range_parser.add_argument('high', type=float, help='The high temperature to set')
 
-    mode_parser = parser.add_subparser('action', 'mode', 'Change the current mode')
+    mode_parser = _parser.add_subparser('action', 'mode', 'Change the current mode')
     mode_parser.add_argument('mode', choices=('cool', 'heat', 'range', 'off'), help='The mode to set')
 
-    fan_parser = parser.add_subparser('action', 'fan', 'Turn the fan on or off')
+    fan_parser = _parser.add_subparser('action', 'fan', 'Turn the fan on or off')
     fan_parser.add_argument('state', choices=('on', 'off'), help='The fan state to change to')
     fan_parser.add_argument('--duration', '-d', type=int, default=1800, help='Time (in seconds) for the fan to run (ignored if setting state to off)')
 
-    show_parser = parser.add_subparser('action', 'show', 'Show information')
+    show_parser = _parser.add_subparser('action', 'show', 'Show information')
     show_parser.add_argument('item', choices=SHOW_ITEMS, help='The information to show')
     show_parser.add_argument('buckets', nargs='*', help='The buckets to show (only applies to item=buckets)')
     show_parser.add_argument('--format', '-f', choices=Printer.formats, help='Output format')
     show_parser.add_argument('--raw', '-r', action='store_true', help='Show the full raw response instead of the processed response (only applies to item=buckets)')
 
-    with parser.add_subparser('action', 'schedule', 'Update the schedule') as schd_parser:
+    with _parser.add_subparser('action', 'schedule', 'Update the schedule') as schd_parser:
         schd_add = schd_parser.add_subparser('sub_action', 'add', 'Add entries with the specified schedule')
         schd_add.add_argument('cron', help='Cron-format schedule to use')
         schd_add.add_argument('temp', type=float, help='The temperature to set at the specified time')
@@ -73,21 +75,21 @@ def parser():
 
         schd_parser.add_common_arg('--dry_run', '-D', action='store_true', help='Print actions that would be taken instead of taking them')
 
-    full_status_parser = parser.add_subparser('action', 'full_status', 'Show/save the full device+shared status')
+    full_status_parser = _parser.add_subparser('action', 'full_status', 'Show/save the full device+shared status')
     full_status_parser.add_argument('--path', '-p', help='Location to store status info')
     full_status_parser.add_argument('--diff', '-d', action='store_true', help='Print a diff of the current status compared to the previous most recent status')
 
-    cfg_parser = parser.add_subparser('action', 'config', 'Manage configuration')
+    cfg_parser = _parser.add_subparser('action', 'config', 'Manage configuration')
     cfg_show_parser = cfg_parser.add_subparser('sub_action', 'show', 'Show the config file contents')
     cfg_set_parser = cfg_parser.add_subparser('sub_action', 'set', 'Set configs')
     cfg_set_parser.add_argument('section', choices=('credentials', 'device', 'oauth', 'units'), help='The section to modify')
     cfg_set_parser.add_argument('key', help='The key within the specified section to modify')
     cfg_set_parser.add_argument('value', help='The new value for the specified section and key')
 
-    parser.add_common_arg('--config', '-c', metavar='PATH', default='~/.config/nest.cfg', help='Config file location')
-    parser.add_common_arg('--reauth', '-A', action='store_true', help='Force re-authentication, even if a cached session exists')
-    parser.add_common_arg('--verbose', '-v', action='count', default=0, help='Increase logging verbosity (can specify multiple times)')
-    return parser
+    _parser.add_common_arg('--config', '-c', metavar='PATH', default='~/.config/nest.cfg', help='Config file location')
+    _parser.add_common_arg('--reauth', '-A', action='store_true', help='Force re-authentication, even if a cached session exists')
+    _parser.add_common_arg('--verbose', '-v', action='count', default=0, help='Increase logging verbosity (can specify multiple times)')
+    return _parser
 
 
 @wrap_main
@@ -95,6 +97,7 @@ async def main():
     args = parser().parse_args()
     log_fmt = '%(asctime)s %(levelname)s %(name)s %(lineno)d %(message)s' if args.verbose else '%(message)s'
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format=log_fmt)
+    logging.getLogger('httpx').setLevel(logging.WARNING)
 
     from nest_client.client import NestWebClient
 
@@ -126,7 +129,7 @@ async def main():
             raise ValueError(f'Unexpected {action=!r}')
 
 
-async def manage_schedule(nest: 'NestWebClient', action: str, args):
+async def manage_schedule(nest: NestWebClient, action: str, args):
     from nest_client.entities import Schedule
 
     if action == 'load':
@@ -144,7 +147,7 @@ async def manage_schedule(nest: 'NestWebClient', action: str, args):
             raise ValueError(f'Unexpected sub_{action=}')
 
 
-async def control_thermostat(nest: 'NestWebClient', action: str, args):
+async def control_thermostat(nest: NestWebClient, action: str, args):
     from nest_client.entities import ThermostatDevice
 
     thermostat = await ThermostatDevice.find(nest)
@@ -182,7 +185,7 @@ def _convert_temp_values(status: dict[str, dict[str, Any]]):
             status[section][key] = c2f(status[section][key])
 
 
-async def show_status(nest: 'NestWebClient', details: bool, out_fmt: str):
+async def show_status(nest: NestWebClient, details: bool, out_fmt: str):
     from nest_client.entities import ThermostatDevice
 
     device = await ThermostatDevice.find(nest)
@@ -212,16 +215,16 @@ async def show_status(nest: 'NestWebClient', details: bool, out_fmt: str):
         status_table = {
             'Mode': colored(mode, 14 if mode == 'COOL' else 13 if mode == 'RANGE' else 9),
             'Humidity': device.humidity,
-            'Temperature': colored('{:>11.1f}'.format(current), 11),
+            'Temperature': colored(f'{current:>11.1f}', 11),
             'Fan': colored('RUNNING', 10) if shared.running else colored('OFF', 8),
-            'Target (low)': colored('{:>12.1f}'.format(target_lo), 14 if target_lo < current else 9),
-            'Target (high)': colored('{:>13.1f}'.format(target_hi), 14 if target_hi < current else 9),
-            'Target': colored('{:>6.1f}'.format(target), 14 if target < current else 9),
+            'Target (low)': colored(f'{target_lo:>12.1f}', 14 if target_lo < current else 9),
+            'Target (high)': colored(f'{target_hi:>13.1f}', 14 if target_hi < current else 9),
+            'Target': colored(f'{target:>6.1f}', 14 if target < current else 9),
         }
         tbl.print_rows([status_table])
 
 
-async def show_item(nest: 'NestWebClient', item: str, out_fmt: str = None, buckets=None, raw: bool = False):
+async def show_item(nest: NestWebClient, item: str, out_fmt: str = None, buckets=None, raw: bool = False):
     if item == 'schedule':
         schedule = await nest.get_object('schedule')  # type: Schedule
         schedule.weekly_schedule.print(out_fmt or ('raw' if raw else 'table'), raw)
@@ -254,7 +257,7 @@ async def show_full_status(nest, path: str = None, diff: bool = False):
 
     data = await nest.app_launch(['device', 'shared'])
     status_path = path.joinpath(f'status_{int(time.time())}.json')
-    log.info(f'Saving status to {status_path}')
+    log.info(f'Saving status to {status_path.as_posix()}')
     with status_path.open('w', encoding='utf-8', newline='\n') as f:
         json.dump(data, f, indent=4, sort_keys=True)
 
