@@ -26,10 +26,9 @@ Example configuration file::
 
 The ``oauth`` section values currently need to be obtained manually by using devtools in Chrome...
 
-.. note::
-    While it may be possible to follow this procedure with Firefox, the value of the ``cookie`` obtained in the last
-    step seems to be slightly different.  Attempting to use it without editing it may cause an encoding error.  Rather
-    than trying to find the correct content to include/exclude, it may be easier to just use Chrome for this instead.
+Note: While it may be possible to follow this procedure with Firefox, the value of the ``cookie`` obtained in the last
+step seems to be slightly different.  Attempting to use it without editing it may cause an encoding error.  Rather
+than trying to find the correct content to include/exclude, it may be easier to just use Chrome for this instead.
 
 The steps to do so:
 
