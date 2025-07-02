@@ -4,6 +4,8 @@ Nest config
 :author: Doug Skrypa
 """
 
+from __future__ import annotations
+
 import logging
 import os
 from configparser import ConfigParser, NoSectionError, NoOptionError
@@ -11,7 +13,7 @@ from datetime import datetime
 from functools import cached_property
 from importlib import resources
 from pathlib import Path
-from typing import Optional, Mapping
+from typing import Mapping
 from zoneinfo import ZoneInfo, available_timezones
 
 __all__ = ['NestConfig', 'DEFAULT_CONFIG_PATH', 'CONFIG_ITEMS']
@@ -27,7 +29,7 @@ CONFIG_ITEMS = {
 
 
 class NestConfig:
-    def __init__(self, path: str = None, overrides: Mapping[str, Optional[str]] = None):
+    def __init__(self, path: str = None, overrides: Mapping[str, str | None] = None):
         path = path or DEFAULT_CONFIG_PATH
         if path.startswith('~/'):
             try:
@@ -60,7 +62,7 @@ class NestConfig:
         new_value: str = None,
         save: bool = False,
         required: bool = False,
-    ) -> Optional[str]:
+    ) -> str | None:
         name = name or key
         try:
             cfg_value = self._data.get(section, key)
@@ -101,7 +103,7 @@ class NestConfig:
         return self.get('credentials', 'email', 'email address', self._overrides.get('email'), required=True)
 
     @property
-    def serial(self) -> Optional[str]:
+    def serial(self) -> str | None:
         return self.get('device', 'serial', 'thermostat serial number', self._overrides.get('serial'))
 
     @property

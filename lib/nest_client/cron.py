@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from functools import cached_property
-from typing import Any, Union, Iterator, Iterable, Mapping
+from typing import Any, Iterator, Iterable, Mapping
 
 try:
     from bitarray import bitarray
@@ -18,8 +18,8 @@ except ImportError:
 
 __all__ = ['CronSchedule', 'NestCronSchedule']
 log = logging.getLogger(__name__)
-CronDict = dict[Union[int, str], bool]
-Bool = Union[bool, Any]
+CronDict = dict[int | str, bool]
+Bool = bool | Any
 
 
 class TimePart:
@@ -52,7 +52,7 @@ class TimePart:
             raise IndexError(f'Invalid time={key} for part={self.name!r}')
         return offset_key
 
-    def __getitem__(self, key: Union[str, int]) -> Bool:
+    def __getitem__(self, key: str | int) -> Bool:
         if isinstance(key, str):
             if keys := self.special_keys:
                 try:
@@ -66,7 +66,7 @@ class TimePart:
             return self.arr[self._offset(key)]
         raise TypeError(f'Unexpected type={key.__class__.__name__} for {key=}')
 
-    def __setitem__(self, key: Union[str, int], value: bool):
+    def __setitem__(self, key: str | int, value: bool):
         if isinstance(key, str):
             if keys := self.special_keys:
                 try:
@@ -195,7 +195,7 @@ class TimePart:
 
             self.set_intervals(vals)
 
-    def set_intervals(self, intervals: Union[Mapping[int, bool], Iterable[int]]):
+    def set_intervals(self, intervals: Mapping[int, bool] | Iterable[int]):
         # log.debug(f'{self!r}: Setting {intervals=}')
         arr = self.arr
         arr.setall(False)
@@ -213,7 +213,7 @@ class TimePart:
             for key in intervals:
                 arr[key] = True
 
-    def replace(self, key: Union[str, int], value: bool):
+    def replace(self, key: str | int, value: bool):
         self.reset(not value)
         self[key] = value
 

@@ -4,6 +4,8 @@ Output formatting utilities.
 :author: Doug Skrypa
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import pprint
@@ -19,7 +21,7 @@ from io import StringIO
 from shutil import get_terminal_size
 from traceback import format_tb
 from types import GeneratorType, TracebackType
-from typing import Union, Collection, TextIO, Optional, Mapping, Any, Type, Iterable, Sized, Container
+from typing import Collection, TextIO, Mapping, Any, Type, Iterable, Sized, Container
 from unicodedata import normalize
 
 import yaml
@@ -36,7 +38,6 @@ __all__ = ['Column', 'SimpleColumn', 'Table', 'TableBar', 'HeaderRow', 'colored'
 log = logging.getLogger(__name__)
 
 ANSI_COLOR_RX = re.compile(r'(\033\[\d+;?\d*;?\d*m)(.*)(\033\[\d+;?\d*;?\d*m)')
-Row = Union[Mapping[str, Any], 'TableBar', 'HeaderRow', Type['TableBar'], Type['HeaderRow']]
 
 
 def colored(text, fg=None, do_color: bool = True, bg=None):
@@ -240,17 +241,20 @@ class HeaderRow:
         return None
 
 
+Row = Mapping[str, Any] | TableBar | HeaderRow | Type[TableBar] | Type[HeaderRow]
+
+
 class Table(ClearableCachedPropertyMixin):
     def __init__(
         self,
-        *columns: Union[Column, SimpleColumn],
+        *columns: Column | SimpleColumn,
         auto_header: bool = True,
         auto_bar: bool = True,
         sort: bool = False,
-        sort_by: Union[Collection, str, None] = None,
+        sort_by: Collection | str | None = None,
         update_width: bool = False,
         fix_ansi_width: bool = False,
-        file: Optional[TextIO] = None,
+        file: TextIO | None = None,
     ):
         self._columns = list(columns[0] if len(columns) == 1 and isinstance(columns[0], GeneratorType) else columns)
         self.auto_header = auto_header
@@ -276,7 +280,7 @@ class Table(ClearableCachedPropertyMixin):
                 return c
         raise KeyError(item)
 
-    def append(self, column: Union[Column, SimpleColumn]):
+    def append(self, column: Column | SimpleColumn):
         self._columns.append(column)
         if column.display:
             self.clear_cached_properties()
@@ -287,7 +291,7 @@ class Table(ClearableCachedPropertyMixin):
         self.clear_cached_properties()
 
     @cached_property
-    def columns(self) -> list[Union[Column, SimpleColumn]]:
+    def columns(self) -> list[Column | SimpleColumn]:
         return [c for c in self._columns if c.display]
 
     @cached_property
@@ -314,7 +318,7 @@ class Table(ClearableCachedPropertyMixin):
     def header_row(self) -> str:
         return self.header_fmt.format(self.headers)
 
-    def header_bar(self, char: str = '-') -> Optional[str]:
+    def header_bar(self, char: str = '-') -> str | None:
         bar = char * len(self.header_row)
         return bar[:get_terminal_size().columns] if self._stdout else bar
 
@@ -347,20 +351,20 @@ class Table(ClearableCachedPropertyMixin):
             output_rows.insert(0, tbl.header_row.rstrip())
         return output_rows
 
-    def _print(self, content: str, color: Union[str, int, None] = None):
+    def _print(self, content: str, color: str | int | None = None):
         if color is not None:
             content = colored(content, color)
         self._file.write(content + '\n')
         if self._flush:
             self._file.flush()
 
-    def print_header(self, add_bar: bool = True, color: Union[str, int, None] = None):
+    def print_header(self, add_bar: bool = True, color: str | int | None = None):
         self.auto_header = False
         self._print(self.header_row.rstrip(), color)
         if add_bar or self.auto_bar:
             self.print_bar(color=color)
 
-    def print_bar(self, char: str = '-', color: Union[str, int, None] = None):
+    def print_bar(self, char: str = '-', color: str | int | None = None):
         self.auto_bar = False
         self._print(self.header_bar(char), color)
 
@@ -399,7 +403,7 @@ class Table(ClearableCachedPropertyMixin):
 
         return row_str.rstrip()
 
-    def print_row(self, row: Row, color: Union[str, int, None] = None):
+    def print_row(self, row: Row, color: str | int | None = None):
         if self.auto_header:
             self.print_header(color=color)
         # Use print_header for headers, but bars can be handled by format_row
@@ -423,7 +427,7 @@ class Table(ClearableCachedPropertyMixin):
 
         return rows
 
-    def format_rows(self, rows: Iterable[Row], full: bool = False) -> Union[list[str], str]:
+    def format_rows(self, rows: Iterable[Row], full: bool = False) -> list[str] | str:
         if full:
             orig_file, orig_flush = self._file, self._flush
             self._flush = False
@@ -443,7 +447,7 @@ class Table(ClearableCachedPropertyMixin):
             col.width = list(filter(None, values)) or 0
 
     def print_rows(
-        self, rows: Iterable[Row], header: bool = False, update_width: bool = False, color: Union[str, int, None] = None
+        self, rows: Iterable[Row], header: bool = False, update_width: bool = False, color: str | int | None = None
     ):
         rows = self.sorted(rows)
         if update_width or self.update_width:

@@ -4,6 +4,8 @@ Library for interacting with the Nest thermostat via the web API
 :author: Doug Skrypa
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import pickle
@@ -11,7 +13,7 @@ import time
 from asyncio import Lock, get_running_loop, gather
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Union, Optional, Mapping, Iterable, Any, AsyncContextManager
+from typing import Union, Optional, Mapping, Iterable, Any, AsyncIterator
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -57,7 +59,7 @@ class NestWebClient:
     # region URLs
 
     @asynccontextmanager
-    async def transport_url(self) -> AsyncContextManager[AsyncRequestsClient]:
+    async def transport_url(self) -> AsyncIterator[AsyncRequestsClient]:
         host, port = await self._transport_host_port()  # Must be outside `with` to prevent deadlock if update is needed
         async with self.auth:
             log.debug(f'Using host:port={host}:{port}')
@@ -65,7 +67,7 @@ class NestWebClient:
             yield self._client
 
     @asynccontextmanager
-    async def nest_url(self) -> AsyncContextManager[AsyncRequestsClient]:
+    async def nest_url(self) -> AsyncIterator[AsyncRequestsClient]:
         async with self.auth:
             host, port = self._nest_host_port
             log.debug(f'Using host:port={host}:{port}')

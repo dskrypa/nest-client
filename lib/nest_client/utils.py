@@ -2,6 +2,8 @@
 Utils for working with Nest thermostats
 """
 
+from __future__ import annotations
+
 import os
 from abc import ABC
 from functools import cached_property

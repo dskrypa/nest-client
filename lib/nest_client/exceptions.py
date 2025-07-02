@@ -4,6 +4,8 @@ Exceptions for working with Nest thermostats
 :author: Doug Skrypa
 """
 
+from __future__ import annotations
+
 from os import environ
 from typing import TYPE_CHECKING
 
@@ -35,7 +37,7 @@ class AuthorizationError(NestException):
 
 
 class ConfigError(NestException):
-    def __init__(self, config: 'NestConfig', message: str):
+    def __init__(self, config: NestConfig, message: str):
         self.config = config
         self.message = message
 
@@ -59,9 +61,11 @@ class TableFormatException(NestException):
         self.exc = exc
         super().__init__(*args)
 
-    def __str__(self):
-        msg_fmt = 'Error formatting {}: {} {}\nFormat string: {!r}\nContent: {}'
-        return msg_fmt.format(self.scope, type(self.exc).__name__, self.exc, self.fmt_str, self.value)
+    def __str__(self) -> str:
+        return (
+            f'Error formatting {self.scope}: {type(self.exc).__name__} {self.exc}'
+            f'\nFormat string: {self.fmt_str!r}\nContent: {self.value}'
+        )
 
 
 class DictAttrFieldNotFoundError(NestException):
@@ -71,6 +75,8 @@ class DictAttrFieldNotFoundError(NestException):
         self.attr = attr
         self.path_repr = path_repr
 
-    def __str__(self):
-        fmt = '{!r} object has no attribute {!r} ({} not found in {!r}.{})'
-        return fmt.format(type(self.obj).__name__, self.prop_name, self.path_repr, self.obj, self.attr)
+    def __str__(self) -> str:
+        return (
+            f'{type(self.obj).__name__!r} object has no attribute {self.prop_name!r}'
+            f' ({self.path_repr} not found in {self.obj!r}.{self.attr})'
+        )

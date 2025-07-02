@@ -4,6 +4,8 @@ Classes that represent a Nest Schedule, and the week, days, and entries in it.
 :author: Doug Skrypa
 """
 
+from __future__ import annotations
+
 import calendar
 import json
 import logging
@@ -12,7 +14,7 @@ from bisect import bisect_left
 from dataclasses import dataclass, field, fields, asdict, InitVar
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Union, Iterator, Iterable, Optional
+from typing import TYPE_CHECKING, Any, Union, Iterator, Iterable
 
 from ..constants import NEST_WHERE_MAP
 from ..cron import NestCronSchedule
@@ -28,10 +30,10 @@ if TYPE_CHECKING:
 __all__ = ['Schedule', 'DaySchedule', 'ScheduleEntry']
 log = logging.getLogger(__name__)
 
-ScheduleEntryDict = dict[str, Union[str, int, float]]
+ScheduleEntryDict = dict[str, str | int | float]
 SchedEntry = Union['ScheduleEntry', ScheduleEntryDict]
-Day = Union[str, int]  # Day name | 0 (Monday) - 6 (Sunday)
-TOD = Union[str, int]  # HH:MM | 0 (midnight) - 86340 (23:59)
+Day = str | int  # Day name | 0 (Monday) - 6 (Sunday)
+TOD = str | int  # HH:MM | 0 (midnight) - 86340 (23:59)
 
 
 class Schedule(NestObject, type='schedule', parent_type='device'):
@@ -45,14 +47,14 @@ class Schedule(NestObject, type='schedule', parent_type='device'):
     # region Class Methods
 
     @classmethod
-    async def from_weekly(cls, client: 'NestWebClient', weekly_schedule: 'WeeklySchedule') -> 'Schedule':
+    async def from_weekly(cls, client: NestWebClient, weekly_schedule: WeeklySchedule) -> Schedule:
         if not (serial := weekly_schedule.meta.serial or client.config.serial):
             device = await client.get_device()  # exc if many/no devices are found
             serial = device.serial
         return cls(f'schedule.{serial}', None, None, weekly_schedule.to_update_dict(), client)
 
     @classmethod
-    async def from_file(cls, client: 'NestWebClient', path: Union[str, Path]) -> 'Schedule':
+    async def from_file(cls, client: NestWebClient, path: str | Path) -> Schedule:
         weekly_schedule = WeeklySchedule.from_file(path)
         # weekly_schedule = await get_running_loop().run_in_executor(None, WeeklySchedule.from_file, path)
         return await cls.from_weekly(client, weekly_schedule)
@@ -70,18 +72,18 @@ class Schedule(NestObject, type='schedule', parent_type='device'):
         return {entry['touched_user_id']: entry['touched_by'] for day in self._days.values() for entry in day.values()}
 
     @cached_property
-    def meta(self) -> 'ScheduleMeta':
+    def meta(self) -> ScheduleMeta:
         user_id = f'user.{self.client._user_id}'
         user_num = self.user_id_num_map[user_id]
         return ScheduleMeta(self.serial, self.name, self.mode, user_id, self.config.temp_unit, user_num, self.version)
 
     @cached_property
-    def weekly_schedule(self) -> 'WeeklySchedule':
+    def weekly_schedule(self) -> WeeklySchedule:
         return WeeklySchedule(self.meta, self._days)
 
     # endregion
 
-    def save(self, path: Union[str, Path], overwrite: bool = False, dry_run: bool = False):
+    def save(self, path: str | Path, overwrite: bool = False, dry_run: bool = False):
         path = Path(path)
         if path.is_file() and not overwrite:
             raise ValueError(f'Path already exists: {path}')
@@ -131,7 +133,7 @@ class Schedule(NestObject, type='schedule', parent_type='device'):
             resp = await self._set_full(payload, 'OVERWRITE')
             log.debug('Push response: {}'.format(json.dumps(resp.json(), indent=4, sort_keys=True)))
 
-    def print(self, output_format: str = 'table', full: bool = False, unit: str = None, raw: bool = False):
+    def print(self, output_format: str = 'table', full: bool | int = False, unit: str = None, raw: bool = False):
         if raw:
             Printer(output_format).pprint(self.to_dict(), sort_keys=False, indent_nested_lists=True)
         else:
@@ -139,16 +141,16 @@ class Schedule(NestObject, type='schedule', parent_type='device'):
 
 
 class WeeklySchedule:
-    days: dict[int, 'DaySchedule']
+    days: dict[int, DaySchedule]
 
-    def __init__(self, meta: 'ScheduleMeta', day_schedules: dict[str, dict[str, ScheduleEntryDict]]):
+    def __init__(self, meta: ScheduleMeta, day_schedules: dict[str, dict[str, ScheduleEntryDict]]):
         self.meta = meta
         self.days = {int(n): DaySchedule(n, schedule.values(), self) for n, schedule in sorted(day_schedules.items())}
 
     # region Alternate Initializers
 
     @classmethod
-    def from_dict(cls, data: dict[str, dict[str, Any]]) -> 'WeeklySchedule':
+    def from_dict(cls, data: dict[str, dict[str, Any]]) -> WeeklySchedule:
         name2num = {name: num for num, name in enumerate(calendar.day_name)}
         self = cls(ScheduleMeta(**data['meta']), {})
         days = sorted(
@@ -159,7 +161,7 @@ class WeeklySchedule:
         return self
 
     @classmethod
-    def from_file(cls, path: Union[str, Path]) -> 'WeeklySchedule':
+    def from_file(cls, path: str | Path) -> WeeklySchedule:
         path = Path(path)
         if not path.is_file():
             raise ValueError(f'Invalid schedule path: {path}')
@@ -175,7 +177,7 @@ class WeeklySchedule:
     def unit(self) -> str:
         return self.meta.unit[0].lower()
 
-    def __getitem__(self, day: Day) -> 'DaySchedule':
+    def __getitem__(self, day: Day) -> DaySchedule:
         day = _normalize_day(day)
         try:
             return self.days[day]
@@ -185,7 +187,7 @@ class WeeklySchedule:
                 return day_schedule
             raise
 
-    def __iter__(self) -> Iterator['DaySchedule']:
+    def __iter__(self) -> Iterator[DaySchedule]:
         for day in range(7):
             yield self[day]
 
@@ -193,7 +195,7 @@ class WeeklySchedule:
 
     # region Format Conversion Methods
 
-    def as_day_time_temp_map(self, convert: bool = None) -> dict[str, Optional[dict[str, float]]]:
+    def as_day_time_temp_map(self, convert: bool = None) -> dict[str, dict[str, float] | None]:
         """Mapping of {day name: {'HH:MM': temperature}}"""
         return {
             calendar.day_name[day_num]: ds.as_time_temp_map(convert) if (ds := self.days.get(day_num)) else None
@@ -203,7 +205,7 @@ class WeeklySchedule:
     def to_dict(self) -> dict[str, dict[str, Any]]:
         return {'meta': self.meta.as_dict(), 'schedule': self.as_day_time_temp_map()}
 
-    def to_update_dict(self) -> dict[str, Union[str, int, dict[str, ScheduleEntryDict]]]:
+    def to_update_dict(self) -> dict[str, str | int | dict[str, ScheduleEntryDict]]:
         days = {str(i): day_schedule.to_update_dict() for i, day_schedule in enumerate(self)}
         return {'ver': self.meta.ver, 'schedule_mode': self.meta.mode, 'name': self.meta.name, 'days': days}
 
@@ -295,9 +297,9 @@ class WeeklySchedule:
 
 
 class DaySchedule:
-    schedule: list['ScheduleEntry']
+    schedule: list[ScheduleEntry]
 
-    def __init__(self, day: Union[Day, int], schedule: Iterable[SchedEntry], parent: WeeklySchedule):
+    def __init__(self, day: Day | int, schedule: Iterable[SchedEntry], parent: WeeklySchedule):
         if not 0 <= (day := _normalize_day(day)) <= 6:
             raise ValueError(f'Invalid {day=} - must be between 0=Monday and 6=Sunday, inclusive')
         self.num = day
@@ -310,13 +312,13 @@ class DaySchedule:
     def __repr__(self) -> str:
         return f'<{self.__class__.__name__}[{self.day}: {self.as_time_temp_map()}]>'
 
-    def __lt__(self, other: 'DaySchedule') -> bool:
+    def __lt__(self, other: DaySchedule) -> bool:
         return self.num < other.num
 
-    def __eq__(self, other: 'DaySchedule') -> bool:
+    def __eq__(self, other: DaySchedule) -> bool:
         return self.num == other.num and self.schedule == other.schedule
 
-    def __getitem__(self, index: int) -> 'ScheduleEntry':
+    def __getitem__(self, index: int) -> ScheduleEntry:
         return self.schedule[index]
 
     def __setitem__(self, index: int, entry: SchedEntry):
@@ -332,7 +334,7 @@ class DaySchedule:
     # endregion
 
     @classmethod
-    def from_time_temp_map(cls, day: Day, time_temp_map: dict[TOD, float], parent: WeeklySchedule) -> 'DaySchedule':
+    def from_time_temp_map(cls, day: Day, time_temp_map: dict[TOD, float], parent: WeeklySchedule) -> DaySchedule:
         meta = parent.meta
         norm_temp = (lambda t: round(f2c(t), 2)) if parent.unit == 'f' else (lambda t: t)
         schedule = [
@@ -349,7 +351,7 @@ class DaySchedule:
         else:
             return {secs_to_wall(d_time): temp for d_time, temp, mode in self}
 
-    def as_dict(self) -> dict[str, 'ScheduleEntry']:
+    def as_dict(self) -> dict[str, ScheduleEntry]:
         return {str(i): entry for i, entry in enumerate(self.schedule)}
 
     def to_update_dict(self) -> dict[str, ScheduleEntryDict]:
@@ -405,7 +407,7 @@ class ScheduleMeta:
     user_num: int = 1
     ver: int = 2
 
-    def as_dict(self) -> dict[str, Union[str, int]]:
+    def as_dict(self) -> dict[str, str | int]:
         return asdict(self)
 
 
@@ -414,7 +416,7 @@ class ScheduleEntry:
     time: int = field(compare=True)
     temp: float = field(compare=False)
     type: str = field(compare=False)
-    touched_user_id: Optional[str] = field(compare=False)
+    touched_user_id: str | None = field(compare=False)
     touched_by: int = field(compare=False, default=1)
     touched_tzo: int = field(compare=False, default=-14400)
     entry_type: str = field(compare=False, default='setpoint')
@@ -426,18 +428,18 @@ class ScheduleEntry:
         self.updated = updated  # noqa  # Planned use case: to show as a different color in table for diff
 
     @classmethod
-    def from_dict(cls, entry: dict[str, Union[str, int, float]]) -> 'ScheduleEntry':
+    def from_dict(cls, entry: dict[str, str | int | float]) -> ScheduleEntry:
         entry.setdefault('type', entry.pop('mode', None))
         return cls(**{k: v for k in (f.name for f in fields(cls)) if (v := entry.get(k)) is not None})
 
-    def as_dict(self) -> dict[str, Union[str, int, float]]:
+    def as_dict(self) -> dict[str, str | int | float]:
         return asdict(self)
 
     @property
     def is_continuation(self) -> bool:
         return self.entry_type == 'continuation'
 
-    def make_continuation(self) -> 'ScheduleEntry':
+    def make_continuation(self) -> ScheduleEntry:
         return ScheduleEntry(0, self.temp, self.type, None, 1, entry_type='continuation', updated=True)
 
 
@@ -459,7 +461,7 @@ def tod_secs(time_of_day: TOD) -> int:
     return time_of_day
 
 
-def _normalize_day(day: Union[str, int]) -> int:
+def _normalize_day(day: str | int) -> int:
     if isinstance(day, str):
         try:
             names_index = _normalize_day._names_index
