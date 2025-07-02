@@ -1,0 +1,104 @@
+[build-system]
+requires = ['setuptools']
+build-backend = 'setuptools.build_meta'
+
+[project]
+dynamic = ['version']
+name = 'nest-client'
+description = 'Nest Web Client'
+readme = 'readme.rst'
+authors = [{name='Doug Skrypa', email='dskrypa@gmail.com'}]
+classifiers = [
+    'Development Status :: 5 - Production/Stable',
+    'Environment :: Console',
+    'Operating System :: OS Independent',
+    'Programming Language :: Python',
+    'Programming Language :: Python :: 3',
+    'Programming Language :: Python :: 3.11',
+    'Programming Language :: Python :: 3.12',
+    'Programming Language :: Python :: 3.13',
+    'Programming Language :: Python :: 3.14',
+]
+requires-python = '>=3.11'
+dependencies = [
+    'cli-command-parser',
+    'requests_client @ git+https://github.com/dskrypa/requests_client',
+    'httpx',
+    'colored',
+    'pyyaml',
+    'tzdata',
+]
+
+[project.urls]
+Source = 'https://github.com/dskrypa/nest-client'
+Issues = 'https://github.com/dskrypa/nest-client/issues'
+
+[project.optional-dependencies]
+dev = ['ipython', 'pre-commit']     # Run `pre-commit install --install-hooks` to install hooks
+schedule = ['bitarray']
+output = ['wcwidth']                # Not required - will use len instead if missing
+
+[project.scripts]
+nest = 'nest_client.cli:main'
+'nest.py' = 'nest_client.cli:main'
+
+
+[tool.setuptools]
+include-package-data = true
+package-dir = {'' = 'lib'}
+
+[tool.setuptools.packages.find]
+where = ['lib']
+include = ['nest_client', 'nest_client.*']
+namespaces = false
+
+[tool.setuptools.dynamic]
+version = {attr='nest_client.__version__.__version__'}
+
+
+[tool.ruff]
+# https://docs.astral.sh/ruff/configuration/
+exclude = ['.git', '.mypy_cache', '.pytest_cache', '.ruff_cache', 'build', 'dist', 'site-packages', 'venv']
+line-length = 120
+indent-width = 4
+target-version = 'py310'
+show-fixes = true
+
+
+[tool.ruff.lint]
+# Enable Pyflakes (`F`) and a subset of the pycodestyle (`E`)  codes by default.
+# Unlike Flake8, Ruff doesn't enable pycodestyle warnings (`W`) or
+# McCabe complexity (`C901`) by default.
+select = ['E4', 'E7', 'E9', 'F', 'W', 'I001']
+ignore = [
+    'E402',  # module level import not at top of file
+    'F401',  # <module> imported but unused
+    'F841',  # local variable <var> is assigned to but never used
+#    'W503',  # line break before binary operator (conflicts with Black)
+    'W605',  # invalid escape sequence <seq>
+]
+
+# Allow fix for all enabled rules (when `--fix`) is provided.
+fixable = ['ALL']
+unfixable = []
+# Allow unused variables when underscore-prefixed.
+dummy-variable-rgx = '^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$'
+
+
+[tool.ruff.format]
+quote-style = 'single'
+indent-style = 'space'
+skip-magic-trailing-comma = false  # Like Black, respect magic trailing commas.
+line-ending = 'lf'
+
+# Enable auto-formatting of code examples in docstrings. Markdown,
+# reStructuredText code/literal blocks and doctests are all supported.
+# This is currently disabled by default, but it is planned for this to be opt-out in the future.
+docstring-code-format = false
+# Set the line length limit used when formatting code snippets in docstrings.
+# This only has an effect when the `docstring-code-format` setting is enabled.
+docstring-code-line-length = 'dynamic'
+
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
