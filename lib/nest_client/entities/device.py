@@ -4,10 +4,12 @@ Classes that represent Nest Devices/Thermostats and related information.
 :author: Doug Skrypa
 """
 
+from __future__ import annotations
+
 import logging
 import time
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any
 
 from ..constants import TARGET_TEMP_TYPES, NEST_WHERE_MAP, ALLOWED_TEMPS
 from ..utils import format_duration, fahrenheit_to_celsius as f2c
@@ -35,20 +37,20 @@ class Device(NestObject, type='device', parent_type=None):
     def __repr__(self) -> str:
         return f'<{self.__class__.__name__}[{self.serial}, name={self.name!r}, model={self.model_version!r}]>'
 
-    async def get_structure(self) -> Optional['Structure']:
+    async def get_structure(self) -> Structure | None:
         structures = await self.client.get_structures()
         return next((st for st in structures.values() if self.key in st.device_ids), None)
 
-    async def get_shared(self) -> Optional['Shared']:
+    async def get_shared(self) -> Shared | None:
         children = await self.get_children()
         return children.get('shared')
 
-    async def dev_shared_tuple(self: 'NestDevice') -> tuple['NestDevice', Optional['Shared']]:
+    async def dev_shared_tuple(self: NestDevice) -> tuple[NestDevice, Shared | None]:
         shared = await self.get_shared()
         return self, shared
 
     @cached_property
-    def where(self) -> Optional[str]:
+    def where(self) -> str | None:
         return NEST_WHERE_MAP.get(self.where_id)
 
     @cached_property
@@ -76,10 +78,10 @@ class ThermostatDevice(Device, type='device', parent_type=None, key='hvac_wires'
         return {k[4:]: v for k, v in self.value.items() if k.startswith('has_')}
 
     @cached_property
-    def fan(self) -> dict[str, Union[str, bool, int]]:
+    def fan(self) -> dict[str, str | bool | int]:
         return {k[4:]: v for k, v in self.value.items() if k.startswith('fan_')}
 
-    async def start_fan(self, duration: int = 1800) -> 'Response':
+    async def start_fan(self, duration: int = 1800) -> Response:
         """
         :param duration: Number of seconds for which the fan should run
         :return: The raw response
@@ -88,12 +90,12 @@ class ThermostatDevice(Device, type='device', parent_type=None, key='hvac_wires'
         log.debug(f'Submitting fan start request with duration={format_duration(duration)} => end time of {timeout}')
         return await self._set_key('fan_timer_timeout', timeout)
 
-    async def stop_fan(self) -> 'Response':
+    async def stop_fan(self) -> Response:
         return await self._set_key('fan_timer_timeout', 0)
 
 
 class Shared(NestObject, type='shared', parent_type='device'):
-    parent: 'NestDevice'
+    parent: NestDevice
     name = NestProperty('name', default='Shared')  # type: str
     mode = NestProperty('target_temperature_type')  # type: str  # one of: TARGET_TEMP_TYPES
     target_temperature_type = NestProperty('target_temperature_type')  # type: str  # one of: TARGET_TEMP_TYPES
@@ -139,7 +141,7 @@ class Shared(NestObject, type='shared', parent_type='device'):
     def target_temp_range(self) -> tuple[float, float]:
         return self.target_temperature_low, self.target_temperature_high
 
-    async def set_temp_range(self, low: float, high: float, convert: bool = True) -> 'Response':
+    async def set_temp_range(self, low: float, high: float, convert: bool = True) -> Response:
         """
         :param low: Minimum temperature to maintain in Celsius (heat will turn on if the temp drops below this)
         :param high: Maximum temperature to allow in Celsius (air conditioning will turn on above this)
@@ -151,14 +153,14 @@ class Shared(NestObject, type='shared', parent_type='device'):
             high = f2c(high)
         return await self._set_full({'target_temperature_low': low, 'target_temperature_high': high})
 
-    async def set_temp(self, temp: float, temporary: bool = False, convert: bool = True) -> 'Response':
+    async def set_temp(self, temp: float, temporary: bool = False, convert: bool = True) -> Response:
         if convert and self.config.temp_unit == 'f':
             temp = f2c(temp)
         adj = 'temporary' if temporary else 'requested'
         log.debug(f'Setting {adj} temp={temp:.1f}')
         return await self._set_key('target_temperature', temp)
 
-    async def set_temp_and_force_run(self, temp: float) -> 'Response':
+    async def set_temp_and_force_run(self, temp: float) -> Response:
         # TODO: Set structure.away to False if it is True?
         if fahrenheit := self.config.temp_unit == 'f':
             temp = f2c(temp)
@@ -181,7 +183,7 @@ class Shared(NestObject, type='shared', parent_type='device'):
             log.log(19, f'Unable to force unit to run for {mode=!r}')
         return await self.set_temp(temp, convert=False)
 
-    async def set_mode(self, mode: str) -> 'Response':
+    async def set_mode(self, mode: str) -> Response:
         """
         :param mode: One of 'cool', 'heat', 'range', or 'off'
         :return: The raw response
@@ -198,7 +200,7 @@ class Shared(NestObject, type='shared', parent_type='device'):
 
 
 class EnergyUsage(NestObject, type='energy_latest', parent_type='device'):
-    parent: 'NestDevice'
+    parent: NestDevice
     recent_max_used = NestProperty('recent_max_used')  # type: int
 
     @cached_property
@@ -219,14 +221,14 @@ class EnergyUsageDay:
     recent_avg_used = NestProperty('recent_avg_used')  # type: int
     usage_over_avg = NestProperty('usage_over_avg')  # type: int
     cycles = NestProperty('cycles')  # type: list[dict[str, int]]
-    events = NestProperty('events')  # type: list[dict[str, Union[str, int, float, bool]]]
+    events = NestProperty('events')  # type: list[dict[str, str | int | float | bool]]
     rates = NestProperty('rates')  # type: list[dict[str, Any]]
     system_capabilities = NestProperty('system_capabilities')  # type: int
     incomplete_fields = NestProperty('incomplete_fields')  # type: int
 
-    def __init__(self, parent: 'EnergyUsage', value: dict[str, Any]):
+    def __init__(self, parent: EnergyUsage, value: dict[str, Any]):
         self.parent = parent
         self.value = value
 
 
-NestDevice = Union[Device, ThermostatDevice]
+NestDevice = Device | ThermostatDevice

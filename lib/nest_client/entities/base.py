@@ -4,10 +4,12 @@ Classes that represent Nest Structures, Users, Devices/Thermostats, etc.
 :author: Doug Skrypa
 """
 
+from __future__ import annotations
+
 import logging
 from datetime import datetime
 from threading import RLock
-from typing import TYPE_CHECKING, Any, Union, Optional, TypeVar, Type, Callable
+from typing import TYPE_CHECKING, Any, TypeVar, Type, Callable
 
 from ..constants import BUCKET_CHILD_TYPES
 from ..exceptions import NestObjectNotFound, DictAttrFieldNotFoundError
@@ -20,7 +22,7 @@ if TYPE_CHECKING:
 __all__ = ['NestObject', 'NestObj', 'NestProperty', 'TemperatureProperty', 'NestObjectDict']
 log = logging.getLogger(__name__)
 
-NestObjectDict = dict[str, Union[str, int, None, dict[str, Any]]]
+NestObjectDict = dict[str, str | int | None | dict[str, Any]]
 NestObj = TypeVar('NestObj', bound='NestObject')
 _NotSet = object()
 
@@ -28,10 +30,10 @@ _NotSet = object()
 class NestObject(ClearableCachedPropertyMixin):
     __lock = RLock()
     __instances = {}
-    type: Optional[str] = None
-    parent_type: Optional[str] = None
-    child_types: Optional[dict[str, bool]] = None
-    sub_type_key: Optional[str] = None
+    type: str | None = None
+    parent_type: str | None = None
+    child_types: dict[str, bool] | None = None
+    sub_type_key: str | None = None
     _type_cls_map: dict[str, Type[NestObj]] = {}
     _sub_type_cls_map: dict[str, dict[str, Type[NestObj]]] = {}
 
@@ -48,7 +50,7 @@ class NestObject(ClearableCachedPropertyMixin):
             cls.child_types = child_types
 
     def __new__(
-        cls, key: str, timestamp: Optional[int], revision: Optional[int], value: dict[str, Any], *args, **kwargs
+        cls, key: str, timestamp: int | None, revision: int | None, value: dict[str, Any], *args, **kwargs
     ):
         if cls is NestObject:
             bucket_type = key.split('.', 1)[0]
@@ -68,10 +70,10 @@ class NestObject(ClearableCachedPropertyMixin):
     def __init__(
         self,
         key: str,
-        timestamp: Optional[int],
-        revision: Optional[int],
+        timestamp: int | None,
+        revision: int | None,
         value: dict[str, Any],
-        client: 'NestWebClient',
+        client: NestWebClient,
     ):
         if hasattr(self, 'key'):
             self.clear_cached_properties()
@@ -111,12 +113,12 @@ class NestObject(ClearableCachedPropertyMixin):
         }
 
     @classmethod
-    def from_dict(cls: Type[NestObj], obj: NestObjectDict, client: 'NestWebClient') -> NestObj:
+    def from_dict(cls: Type[NestObj], obj: NestObjectDict, client: NestWebClient) -> NestObj:
         return cls(obj['object_key'], obj['object_timestamp'], obj['object_revision'], obj['value'], client)
 
     @classmethod
     async def find(
-        cls: Type[NestObj], client: 'NestWebClient', serial: str = None, type: str = None  # noqa
+        cls: Type[NestObj], client: NestWebClient, serial: str = None, type: str = None  # noqa
     ) -> NestObj:
         if type and cls.type is not None and type != cls.type:
             expected = cls._type_cls_map.get(type, NestObject).__name__
@@ -124,7 +126,7 @@ class NestObject(ClearableCachedPropertyMixin):
         return await client.get_object(type or cls.type, serial, _sub_type_key=cls.sub_type_key)
 
     @classmethod
-    async def find_all(cls: Type[NestObj], client: 'NestWebClient', type: str = None) -> dict[str, NestObj]:  # noqa
+    async def find_all(cls: Type[NestObj], client: NestWebClient, type: str = None) -> dict[str, NestObj]:  # noqa
         if type and cls.type is not None and type != cls.type:
             expected = cls._type_cls_map.get(type, NestObject).__name__
             raise ValueError(f'Use {expected} - {cls.__name__} is incompatible with {type=}')
@@ -139,7 +141,7 @@ class NestObject(ClearableCachedPropertyMixin):
     def needs_refresh(self, interval: float) -> bool:
         return self._needs_update or (datetime.now() - self._refreshed).total_seconds() >= interval
 
-    def subscribe_dict(self, meta: bool = True) -> dict[str, Union[str, int, None]]:
+    def subscribe_dict(self, meta: bool = True) -> dict[str, str | int | None]:
         if meta:
             return {'object_key': self.key, 'object_timestamp': self.timestamp, 'object_revision': self.revision}
         else:
@@ -183,10 +185,10 @@ class NestObject(ClearableCachedPropertyMixin):
 
     # endregion
 
-    async def _set_key(self, key: str, value: Any, op: str = 'MERGE') -> 'Response':
+    async def _set_key(self, key: str, value: Any, op: str = 'MERGE') -> Response:
         return await self._set_full({key: value}, op)
 
-    async def _set_full(self, data: dict[str, Any], op: str = 'MERGE') -> 'Response':
+    async def _set_full(self, data: dict[str, Any], op: str = 'MERGE') -> Response:
         payload = {'objects': [{'object_key': self.key, 'op': op, 'value': data}]}
         self._needs_update = True
         async with self.client.transport_url() as client:
@@ -215,7 +217,7 @@ class NestObject(ClearableCachedPropertyMixin):
             return {obj.type: obj for obj in key_obj_map.values() if obj.serial == self.serial}
         return {}
 
-    async def get_parent(self) -> Optional[NestObj]:
+    async def get_parent(self) -> NestObj | None:
         if self.parent_type:
             try:
                 return await self.client.get_object(self.parent_type, self.serial)
@@ -269,13 +271,13 @@ class NestProperty(ClearableCachedProperty):
 
     def __set_name__(self, owner, name):
         self.name = name
-        attr_path = ''.join('[{!r}]'.format(p) for p in self.path)
+        attr_path = ''.join(f'[{p!r}]' for p in self.path)
         self.__doc__ = (
             f'A :class:`NestProperty<nest.entities.base.NestProperty>` that references this {owner.__name__}'
             f' instance\'s {self.attr}{attr_path}'
         )
 
-    def __get__(self, obj: 'NestObject', cls):
+    def __get__(self, obj: NestObject, cls):
         if obj is None:
             return self
 
@@ -303,14 +305,14 @@ class NestProperty(ClearableCachedProperty):
             obj.__dict__[self.name] = value
         return value
 
-    # def __get__(self, obj: 'NestObject', cls):
+    # def __get__(self, obj: NestObject, cls):
     #     if obj is None:
     #         return self
     #     return self._get(obj).__await__()
 
 
 class TemperatureProperty(NestProperty):
-    def __get__(self, obj: 'NestObject', cls):
+    def __get__(self, obj: NestObject, cls):
         if obj is None:
             return self
         value_c = super().__get__(obj, cls)
